@@ -242,17 +242,17 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
                             depth_preds = y['depth']
                             depth_loss, depth_stat = depth_loss_fn(depth_maps, depth_preds)
 
-                        # # pr loss
-                        # pr_loss, pr_stat = pr_loss_fn(spec, positives_mask, negatives_mask)
+                        # pr loss
+                        pr_loss, pr_stat = pr_loss_fn(spec, positives_mask, negatives_mask)
                         
                         # yaw loss
                         yaw_loss, yaw_stat = yaw_loss_fn(spec, poses, positives_mask, kl_map)
                         
                         # trans loss
                         if bev_trans is not None:
-                            trans_loss, trans_stat = trans_loss_fn(bev_trans, poses, positives_mask, kl_map=kl_map, trans_cnn=None)
+                            trans_loss, trans_stat = trans_loss_fn(bev_trans, poses, positives_mask, trans_cnn=None)
                         else:
-                            trans_loss, trans_stat = trans_loss_fn(bev, poses, positives_mask, kl_map=kl_map, trans_cnn=trans_cnn)
+                            trans_loss, trans_stat = trans_loss_fn(bev, poses, positives_mask, trans_cnn=trans_cnn)
                     else:
                         embedding = y['global']
                         # pr loss
@@ -295,7 +295,7 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
                         optimizer.step()
 
                 running_stats.append(batch_stats)
-                # torch.cuda.empty_cache()  # Prevent excessive GPU memory ddconsumption by SparseTensors
+                torch.cuda.empty_cache()  # Prevent excessive GPU memory ddconsumption by SparseTensors
             
             if epoch % params.save_freq == 0 and phase == 'train':
                 save_path = os.path.join(weights_path, model_name + '_' + str(epoch) + '.pth')

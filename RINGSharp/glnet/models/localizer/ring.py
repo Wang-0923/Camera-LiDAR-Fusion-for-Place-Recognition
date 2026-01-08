@@ -6,7 +6,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.parallel
 import torch.nn.functional as F
-from torch_radon import  ParallelBeam
+from torch_radon import Radon, ParallelBeam, RadonFanbeam
 
 from glnet.utils.params import ModelParams
 from glnet.utils.data_utils.point_clouds import generate_bev, generate_bev_occ, generate_bev_feats

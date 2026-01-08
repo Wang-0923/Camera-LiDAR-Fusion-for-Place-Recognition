@@ -21,7 +21,7 @@ export PYTHONPATH=/home/wyz/RINGSharp/:$PYTHONPATH
 export PYTHONPATH=/home/wyz/RINGSharp/RINGSharp/glnet:$PYTHONPATH
 export PYTHONPATH=/home/wyz/RINGSharp/RINGSharp/glnet/ops:$PYTHONPATH
 
-git config --global --add safe.directory /home/lee/RINGSharp
+git config --global --add safe.directory /home/wyz/RINGSharp
 
 python tools/evaluate_ours_pe.py
 ```

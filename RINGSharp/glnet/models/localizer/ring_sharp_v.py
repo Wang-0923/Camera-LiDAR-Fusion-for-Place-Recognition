@@ -6,7 +6,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.parallel
 import torch.nn.functional as F
-from torch_radon import ParallelBeam
+from torch_radon import Radon, ParallelBeam, RadonFanbeam
 
 import glnet.utils.vox_utils.geom as geom
 import glnet.utils.vox_utils.basic as basic

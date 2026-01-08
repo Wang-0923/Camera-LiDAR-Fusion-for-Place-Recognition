@@ -38,28 +38,35 @@
 - [CUDA](https://developer.nvidia.com/cuda-downloads) (We have tested with CUDA 11.3 and 11.6)
 
 ## 🚀 Installation <a name="installation"></a>
-1. 
-    
+1. Create a virtual environment:
+    ```bash
+    conda create -n ringsharp python=3.8
+    conda activate ringsharp
+    ```
+
+2. Clone the repository and install core dependencies:
+
     It's highly recommended to use the exact versions specified in `requirements.txt` to ensure reproducibility.
     ```bash
-    git clone 
-    apt update
-    apt install python3-tk
+    git clone https://github.com/lus6-Jenny/RINGSharp.git
+    cd RINGSharp
+    pip install -r requirements.txt
     ```
     *(Note: If you encounter issues, check compatibility with your CUDA and PyTorch versions.)*
-    
-2. Install external dependencies from source:
+
+3. Install external dependencies from source:
 
     Some components ([fast_gicp](https://github.com/SMRT-AIST/fast_gicp), [torch-radon](https://github.com/matteo-ronchetti/torch-radon)) require manual compilation:
     ```bash
+    # Install fast_gicp (if needed for point cloud registration)
+    git clone https://github.com/SMRT-AIST/fast_gicp.git --recursive
     cd fast_gicp
     python setup.py install --user
-    
+
+    # Install torch-radon (required for RING#)
+    git clone https://github.com/matteo-ronchetti/torch-radon.git -b v2
     cd torch-radon
     python setup.py install
-    
-    grep -n "ParallelBeam" -n /home/wyz/RINGSharp/RINGSharp/glnet/models/localizer/ring_sharp_v.py<br/>
-    grep -n "torch_radon" -n /home/wyz/RINGSharp/RINGSharp/glnet/models/localizer/ring_sharp_v.py
     ```
 
 4. Install the package:
@@ -67,7 +74,7 @@
     # Install custom CUDA ops for glnet
     cd glnet/ops
     python setup.py develop
-    
+
     # Install the main glnet package
     cd ../..
     python setup.py develop
@@ -82,8 +89,6 @@
     ```
     ~/Data/
     ├── NCLT/
-    |   ├── U2D/ (Distortion parameters)
-    │   ├── cam_param/ (Camera parameters)
     │   ├── yyyy-mm-dd/ (e.g., 2012-01-08)
     │   │   ├── velodyne_sync/ (Velodyne data)
     │   │   │   ├── xxxxxx.bin
@@ -97,6 +102,8 @@
     │   │   │   ├── Cam3/
     │   │   │   ├── Cam4/
     │   │   │   ├── Cam5/
+    │   │   ├── cam_param/ (Camera parameters)
+    │   │   ├── U2D/ (Distortion parameters)
     │   │   └── ...
     │   └── ...
     └── Oxford_radar/
@@ -129,7 +136,7 @@
    # ------ NCLT Dataset ------
    cd glnet/datasets/nclt
    python image_preprocess.py # The generated images will be saved in the 'lb3_u_s_384/Cam{0,1,2,3,4,5}' directories in jpg format
-   
+
    # ------ Oxford Radar Dataset ------
    cd glnet/datasets/oxford
    python image_preprocess.py # The generated images will be saved in the 'mono_left_rect', 'mono_rear_rect', 'mono_right_rect', 'stereo/centre_rect' directories in png format
@@ -176,13 +183,14 @@
 ## 🏗️ Training <a name="training"></a>
 The training script is located in the `tools` directory. You can run the training script with the following command:
 ```bash
+cd tools
+python train.py --dataset_type nclt \
+                --dataset_root ~/Data/NCLT \
+                --exp_name ring_sharp_v_nclt_run1 \
+                --config ../glnet/config/config_nclt.txt \
+                --model_config ../glnet/config/ring_sharp_v_nclt.txt \
                 # --resume \
                 # --weight xxx.pth
-cd tools
-python train.py \
-  --config ../glnet/config/config_nclt.txt \
-  --model_config ../glnet/config/ring_sharp_v_nclt.txt \
-  --exp_name ring_sharp_v_nclt_run1
 ```
 
 **Key flags**:

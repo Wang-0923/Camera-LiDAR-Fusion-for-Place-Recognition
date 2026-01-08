@@ -216,7 +216,7 @@ class TransLoss:
         self.trans_Ploss = Max_P_2DLoss()
         self.trans_Eloss = Exp_2DLoss()
 
-    def __call__(self, bevs, poses, positives_mask, kl_map=None, trans_cnn=None, **kwargs):
+    def __call__(self, bevs, poses, positives_mask, trans_cnn=None):
         B, C, H, W = bevs.shape
         dummy_labels = torch.arange(B)
         loss = torch.zeros(1).cuda()
