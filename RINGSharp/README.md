@@ -87,7 +87,7 @@
     
     Organize the downloaded data into directories. Example structure:
     ```
-    ~/Data/
+    Data/
     ├── NCLT/
     │   ├── yyyy-mm-dd/ (e.g., 2012-01-08)
     │   │   ├── velodyne_sync/ (Velodyne data)
@@ -150,22 +150,22 @@
     # ------ NCLT Dataset ------
     cd glnet/datasets/nclt
     # Generate training and validation pickles
-    python generate_training_tuples.py --dataset_root ~/Data/NCLT
+    python generate_training_tuples.py --dataset_root Data/NCLT
     # Generate evaluation pickle
-    python generate_evaluation_sets.py --dataset_root ~/Data/NCLT
+    python generate_evaluation_sets.py --dataset_root Data/NCLT
     
     # ------ Oxford Radar Dataset ------
     cd glnet/datasets/oxford
     # Generate training and validation pickles
-    python generate_training_tuples.py --dataset_root ~/Data/Oxford_radar
+    python generate_training_tuples.py --dataset_root Data/Oxford_radar
     # Generate evaluation pickle
-    python generate_evaluation_sets.py --dataset_root ~/Data/Oxford_radar
+    python generate_evaluation_sets.py --dataset_root Data/Oxford_radar
     
     # ------ Optional Data Generation ------
     # Generate bev images for LiDAR data (use --bev flag)
-    python generate_training_tuples.py --dataset_root ~/Data/NCLT --bev
+    python generate_training_tuples.py --dataset_root Data/NCLT --bev
     # Generate panorama images for vision data (use --sph flag)
-    python generate_training_tuples.py --dataset_root ~/Data/NCLT --sph # defaule scale of panorama size is 2
+    python generate_training_tuples.py --dataset_root Data/NCLT --sph # defaule scale of panorama size is 2
     ```
     *(Note: The generated `.pickle` files will be saved in the `dataset_root` directory.)*
 
@@ -185,7 +185,7 @@ The training script is located in the `tools` directory. You can run the trainin
 ```bash
 cd tools
 python train.py --dataset_type nclt \
-                --dataset_root ~/Data/NCLT \
+                --dataset_root Data/NCLT \
                 --exp_name ring_sharp_v_nclt_run1 \
                 --config ../glnet/config/config_nclt.txt \
                 --model_config ../glnet/config/ring_sharp_v_nclt.txt \
@@ -208,7 +208,7 @@ python train.py --dataset_type nclt \
         ```bash
         cd tools
         python evaluate_ours_pe.py --dataset_type nclt \
-                                   --dataset_root ~/Data/NCLT \
+                                   --dataset_root Data/NCLT \
                                    --exp_name ring_sharp_v_nclt_run1 \
                                    --eval_set test_2012-02-04_2012-03-17_20.0_5.0.pickle \
                                    --model_config ../glnet/config/ring_sharp_v.txt \
@@ -218,7 +218,7 @@ python train.py --dataset_type nclt \
         ```bash
         cd tools
         python evaluate_ours_gl.py --dataset_type nclt \
-                                   --dataset_root ~/Data/NCLT \
+                                   --dataset_root Data/NCLT \
                                    --exp_name ring_sharp_v_nclt_run1 \
                                    --eval_set test_2012-02-04_2012-03-17_20.0_5.0.pickle \
                                    --model_config ../glnet/config/ring_sharp_v_nclt.txt \
@@ -233,7 +233,7 @@ python train.py --dataset_type nclt \
         ```bash
         cd glnet/models/extractor_matcher
         python evaluate_pe.py --dataset_type nclt \
-                              --dataset_root ~/Data/NCLT \
+                              --dataset_root Data/NCLT \
                               --exp_name netvlad_nclt_run1 \
                               --eval_set test_2012-02-04_2012-03-17_20.0_5.0.pickle \
                               --model_config ../../config/netvlad_pretrain_nclt.txt \
@@ -245,7 +245,7 @@ python train.py --dataset_type nclt \
         ```bash
         cd glnet/models/extractor_matcher
         python evaluate_gl.py --dataset_type nclt \
-                              --dataset_root ~/Data/NCLT \
+                              --dataset_root Data/NCLT \
                               --exp_name netvlad_nclt_run1 \
                               --eval_set test_2012-02-04_2012-03-17_20.0_5.0.pickle \
                               --model_config ../../config/netvlad_pretrain_nclt.txt \
@@ -262,28 +262,28 @@ python train.py --dataset_type nclt \
         cd tools
         # RING, RING++
         python evaluate_ring_pe.py --dataset_type nclt \
-                                   --dataset_root ~/Data/NCLT \
+                                   --dataset_root Data/NCLT \
                                    --exp_name ring_nclt \
                                    --eval_set test_2012-02-04_2012-03-17_20.0_5.0.pickle \
                                    --model_config ../glnet/config/ring_nclt.txt \
                                    --icp_refine
         # EgoNN
         python evaluate_egonn_pe.py --dataset_type nclt \
-                                    --dataset_root ~/Data/NCLT \
+                                    --dataset_root Data/NCLT \
                                     --exp_name egonn_nclt \
                                     --eval_set test_2012-02-04_2012-03-17_20.0_5.0.pickle \
                                     --model_config ../glnet/config/egonn_nclt.txt \
                                     --icp_refine
         # LCDNet
         python evaluate_lcdnet_pe.py --dataset_type nclt \
-                                     --dataset_root ~/Data/NCLT \
+                                     --dataset_root Data/NCLT \
                                      --exp_name lcdnet_nclt \
                                      --eval_set test_2012-02-04_2012-03-17_20.0_5.0.pickle \
                                      --model_config ../glnet/config/lcdnet_nclt.txt \
                                      --icp_refine
         # DiSCO, OverlapTransformer
         python evaluate_others_pe.py --dataset_type nclt \
-                                     --dataset_root ~/Data/NCLT \
+                                     --dataset_root Data/NCLT \
                                      --exp_name disco_nclt \
                                      --eval_set test_2012-02-04_2012-03-17_20.0_5.0.pickle \
                                      --model_config ../glnet/config/disco_nclt.txt \
@@ -294,7 +294,7 @@ python train.py --dataset_type nclt \
         cd tools
         # RING, RING++
         python evaluate_ours_gl.py --dataset_type nclt \
-                                   --dataset_root ~/Data/NCLT \
+                                   --dataset_root Data/NCLT \
                                    --exp_name ring_nclt \
                                    --eval_set test_2012-02-04_2012-03-17_20.0_5.0.pickle \
                                    --model_config ../glnet/config/ring_nclt.txt \
@@ -302,7 +302,7 @@ python train.py --dataset_type nclt \
                                    # --one_shot (for one-stage global localization)
         # EgoNN
         python evaluate_egonn_gl.py --dataset_type nclt \
-                                    --dataset_root ~/Data/NCLT \
+                                    --dataset_root Data/NCLT \
                                     --exp_name egonn_nclt \
                                     --eval_set test_2012-02-04_2012-03-17_20.0_5.0.pickle \
                                     --model_config ../glnet/config/egonn_nclt.txt \
@@ -310,7 +310,7 @@ python train.py --dataset_type nclt \
                                     # --one_shot (for one-stage global localization)
         # LCDNet
         python evaluate_lcdnet_gl.py --dataset_type nclt \
-                                     --dataset_root ~/Data/NCLT \
+                                     --dataset_root Data/NCLT \
                                      --exp_name lcdnet_nclt \
                                      --eval_set test_2012-02-04_2012-03-17_20.0_5.0.pickle \
                                      --model_config ../glnet/config/lcdnet_nclt.txt \
@@ -318,7 +318,7 @@ python train.py --dataset_type nclt \
                                      # --one_shot (for one-stage global localization)
         # DiSCO, OverlapTransformer
         python evaluate_others_gl.py --dataset_type nclt \
-                                     --dataset_root ~/Data/NCLT \
+                                     --dataset_root Data/NCLT \
                                      --exp_name disco_nclt \
                                      --eval_set test_2012-02-04_2012-03-17_20.0_5.0.pickle \
                                      --model_config ../glnet/config/disco_nclt.txt \
@@ -364,4 +364,3 @@ We thank the developers of the following open-source projects for their contribu
 
 ## 📝 License <a name="license"></a>
 The code is released under the [MIT License](https://opensource.org/license/mit/).
-

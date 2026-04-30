@@ -175,6 +175,6 @@ if __name__ == "__main__":
 
     # stitch the images together to create a panorama
     stitcher = Stitcher()
-    result = stitcher.stitch(images, '~/Data/NCLT/')
+    result = stitcher.stitch(images, _ex('Data/NCLT'))
     result = cv2.rotate(result, cv2.ROTATE_180)
     cv2.imwrite('./output.jpg', result)

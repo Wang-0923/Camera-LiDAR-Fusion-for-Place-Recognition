@@ -5,27 +5,32 @@ img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
                 to_rgb=True)
 
+visual_x_bound = [-51.2, 51.2, 0.8]
+visual_y_bound = [-51.2, 51.2, 0.8]
+visual_x_grid = int((visual_x_bound[1] - visual_x_bound[0]) / visual_x_bound[2])
+visual_y_grid = int((visual_y_bound[1] - visual_y_bound[0]) / visual_y_bound[2])
+
 nclt_pc_bev_conf = {
-    'x_bound': [-70.0, 70.0],
-    'y_bound': [-70.0, 70.0],
+    'x_bound': visual_x_bound[:2],
+    'y_bound': visual_y_bound[:2],
     'z_bound': [-20.0, -1.0],
-    'x_grid': 160,
-    'y_grid': 160,
+    'x_grid': visual_x_grid,
+    'y_grid': visual_y_grid,
     'z_grid': 20
 }
 
 oxford_pc_bev_conf = {
-    'x_bound': [-70.0, 70.0],
-    'y_bound': [-70.0, 70.0],
+    'x_bound': visual_x_bound[:2],
+    'y_bound': visual_y_bound[:2],
     'z_bound': [-16.0, 4.0],
-    'x_grid': 160,
-    'y_grid': 160,
+    'x_grid': visual_x_grid,
+    'y_grid': visual_y_grid,
     'z_grid': 20
 }
 
 backbone_conf = {
-    'x_bound': [-51.2, 51.2, 0.8], # [-51.2, 51.2, 0.8]
-    'y_bound': [-51.2, 51.2, 0.8], # [-51.2, 51.2, 0.8]
+    'x_bound': visual_x_bound,
+    'y_bound': visual_y_bound,
     'z_bound': [-15, 15, 30], # [-5, 3, 8] # [-15, 5, 20]
     'd_bound': [2.0, 58.0, 0.5],
     'final_dim':

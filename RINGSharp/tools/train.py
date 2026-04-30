@@ -1,7 +1,13 @@
 # Zhejiang University
 
 import argparse
+import os
+import sys
 import torch
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 from trainer import do_train
 from glnet.utils.params import TrainingParams
@@ -12,6 +18,8 @@ if __name__ == '__main__':
     parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
     parser.add_argument('--model_config', type=str, required=True, help='Path to the model-specific configuration file')
     parser.add_argument('--exp_name', type=str, required=True, help='Experiment name')
+    parser.add_argument('--dataset_type', type=str, default=None, choices=['nclt', 'oxford'], help='Override dataset type from the training config')
+    parser.add_argument('--dataset_root', type=str, default=None, help='Override dataset root from the training config')
     parser.add_argument('--debug', dest='debug', action='store_true')
     parser.set_defaults(debug=False)
     parser.add_argument('--resume', dest='resume', action='store_true')
@@ -30,7 +38,7 @@ if __name__ == '__main__':
     else:
         args.weight = None
     
-    params = TrainingParams(args.config, args.model_config)
+    params = TrainingParams(args.config, args.model_config, dataset_type=args.dataset_type, dataset_root=args.dataset_root)
     params.print()
 
     if args.debug:

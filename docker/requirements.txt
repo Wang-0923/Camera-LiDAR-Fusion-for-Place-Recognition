@@ -4,6 +4,7 @@ pandas
 Pillow 
 numpy==1.23.1
 scikit_image==0.19.3
+scikit-learn
 opencv-python<=4.5.1.48
 setuptools==67.6.0 
 matplotlib==3.6.1 

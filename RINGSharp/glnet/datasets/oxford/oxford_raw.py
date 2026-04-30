@@ -11,6 +11,7 @@ import random
 from glnet.datasets.oxford.utils import read_lidar_poses, in_test_split, in_train_split, find_nearest_ndx, read_ts_file
 from glnet.datasets.oxford.velodyne import load_velodyne_raw, load_velodyne_binary, velodyne_raw_to_pointcloud
 from glnet.utils.data_utils.point_clouds import PointCloudLoader, PointCloudWithImageLoader
+from glnet.utils.common_utils import _ex
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
@@ -163,7 +164,7 @@ class OxfordSequence(Dataset):
     Dataset returns a point cloud from a train or test split from one sequence from a raw Mulran dataset
     """
     def __init__(self, dataset_root: str, sequence_name: str, split: str, sampling_distance: float = 0.2):
-        dataset_root = os.path.expanduser(dataset_root)
+        dataset_root = _ex(dataset_root)
         assert os.path.exists(dataset_root), f'Cannot access dataset root: {dataset_root}'
         assert split in ['train', 'test', 'all']
 
@@ -401,7 +402,7 @@ class OxfordSequences(Dataset):
 
 
 if __name__ == '__main__':
-    dataset_root = '~/Data/Oxford_radar/'
+    dataset_root = _ex('Data/Oxford_radar')
     sequence_names = ['2019-01-11-13-24-51']
 
     db = OxfordSequences(dataset_root, sequence_names, split='train')
@@ -410,4 +411,3 @@ if __name__ == '__main__':
 
     res = db.find_neighbours_ndx(e['position'], radius=50)
     print('.')
-

@@ -6,13 +6,111 @@ import shutil
 import subprocess
 import SharedArray
 import collections
+from pathlib import Path
 
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-_ex = lambda x: os.path.realpath(os.path.expanduser(x))
+CONTAINER_DATA_ROOT = '/home/wyz/RINGSharp/Data'
+
+
+def get_repo_root() -> str:
+    return str(Path(__file__).resolve().parents[2])
+
+
+def get_workspace_root() -> str:
+    return str(Path(get_repo_root()).parent)
+
+
+def get_workspace_data_root() -> str:
+    env_data_root = os.getenv('RINGSHARP_DATA_ROOT') or os.getenv('DATA_ROOT')
+    candidates = [
+        env_data_root,
+        os.path.join(get_repo_root(), 'Data'),
+        os.path.join(get_workspace_root(), 'Data'),
+        CONTAINER_DATA_ROOT,
+        os.path.expanduser('~/RINGSharp/Data'),
+        os.path.expanduser('~/Data'),
+    ]
+
+    normalized_candidates = []
+    seen = set()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        normalized = os.path.realpath(os.path.expandvars(os.path.expanduser(candidate)))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_candidates.append(normalized)
+
+    for candidate in normalized_candidates:
+        if os.path.exists(candidate):
+            return candidate
+
+    if env_data_root:
+        return os.path.realpath(os.path.expandvars(os.path.expanduser(env_data_root)))
+
+    return os.path.realpath(os.path.join(get_repo_root(), 'Data'))
+
+
+def get_default_dataset_root(dataset_type: str) -> str:
+    dataset_type = dataset_type.lower()
+    dataset_name = 'NCLT' if dataset_type == 'nclt' else 'Oxford_radar'
+    return os.path.join(get_workspace_data_root(), dataset_name)
+
+
+def get_default_image_meta_path(dataset_type: str) -> str:
+    return os.path.join(get_default_dataset_root(dataset_type), 'image_meta.pkl')
+
+
+def _remap_workspace_data_path(path_str: str) -> str:
+    workspace_data_root = get_workspace_data_root()
+    normalized = path_str.replace('\\', '/')
+    for prefix in ('/Data', 'Data'):
+        if normalized == prefix or normalized.startswith(prefix + '/'):
+            suffix = normalized[len(prefix):].lstrip('/')
+            return os.path.join(workspace_data_root, suffix)
+
+    prefixes = [
+        workspace_data_root,
+        os.path.join(get_repo_root(), 'Data'),
+        os.path.join(get_workspace_root(), 'Data'),
+        CONTAINER_DATA_ROOT,
+        os.path.expanduser('~/RINGSharp/Data'),
+        os.path.expanduser('~/Data'),
+    ]
+
+    normalized_prefixes = []
+    seen = set()
+    for prefix in prefixes:
+        if not prefix:
+            continue
+        normalized_prefix = os.path.realpath(os.path.expandvars(os.path.expanduser(prefix))).replace('\\', '/')
+        if normalized_prefix in seen:
+            continue
+        seen.add(normalized_prefix)
+        normalized_prefixes.append(normalized_prefix)
+
+    normalized_prefixes.sort(key=len, reverse=True)
+
+    for prefix in normalized_prefixes:
+        if normalized == prefix or normalized.startswith(prefix + '/'):
+            suffix = normalized[len(prefix):].lstrip('/')
+            return os.path.join(workspace_data_root, suffix)
+
+    return path_str
+
+
+def _ex(path_like):
+    if path_like is None:
+        return None
+
+    expanded = os.path.expandvars(os.path.expanduser(str(path_like)))
+    remapped = _remap_workspace_data_path(expanded)
+    return os.path.realpath(remapped)
 
 def dict_to_device(ob, device):
     if isinstance(ob, collections.Mapping):

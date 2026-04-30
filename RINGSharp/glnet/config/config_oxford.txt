@@ -1,6 +1,6 @@
 [DEFAULT]
 dataset = oxford
-dataset_folder = ~/Data/Oxford_radar
+dataset_folder = Data/Oxford_radar
 
 [TRAIN]
 num_workers = 16

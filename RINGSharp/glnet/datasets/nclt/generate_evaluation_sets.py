@@ -3,9 +3,15 @@
 import argparse
 from typing import List
 import os
+import sys
 import copy
 import tqdm
 import numpy as np
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
 from glnet.config.config import *
 from glnet.datasets.nclt.nclt_raw import NCLTSequence, load_lidar_file_nclt, load_im_file_for_generate, pc2image_file
 from glnet.datasets.base_datasets import EvaluationTuple, EvaluationSet
@@ -13,11 +19,22 @@ from glnet.datasets.dataset_utils import filter_query_elements
 from glnet.datasets.panorama import generate_sph_image
 from glnet.utils.data_utils.point_clouds import visualize_2d_data, generate_bev
 import cv2
+from glnet.utils.common_utils import _ex
 
 DEBUG = False
 
+PROTOCOL1_MAP_SEQUENCE = '2012-02-04'
+PROTOCOL1_QUERY_SEQUENCE = '2012-03-17'
+PROTOCOL1_SPLIT = 'test'
+PROTOCOL1_MAP_SAMPLING_DISTANCE = 20.0
+PROTOCOL1_QUERY_SAMPLING_DISTANCE = 5.0
+PROTOCOL1_DIST_THRESHOLD = 50.0
+
 bounds = (nclt_pc_bev_conf['x_bound'][0], nclt_pc_bev_conf['x_bound'][1], nclt_pc_bev_conf['y_bound'][0], \
           nclt_pc_bev_conf['y_bound'][1], nclt_pc_bev_conf['z_bound'][0], nclt_pc_bev_conf['z_bound'][1])
+bev_x = nclt_pc_bev_conf['x_grid']
+bev_y = nclt_pc_bev_conf['y_grid']
+bev_z = nclt_pc_bev_conf['z_grid']
 
 def get_scans(sequence: NCLTSequence) -> List[EvaluationTuple]:
     # Get a list of all readings from the test area in the sequence
@@ -41,6 +58,7 @@ def generate_evaluation_set(dataset_root: str, map_sequence: str, query_sequence
 
     map_set = get_scans(map_sequence)
     query_set = get_scans(query_sequence)
+    query_count_before_filtering = len(query_set)
     
     if bev:
         os.makedirs(query_bev_folder, exist_ok=True)
@@ -54,7 +72,7 @@ def generate_evaluation_set(dataset_root: str, map_sequence: str, query_sequence
             #     pass
             # else:
             pc = load_lidar_file_nclt(reading_filepath).astype(np.float32)
-            pc_bev = generate_bev(pc, bounds=bounds).numpy()
+            pc_bev = generate_bev(pc, Z=bev_z, Y=bev_y, X=bev_x, bounds=bounds).numpy()
             print(f'Generating {bev_filename}')
             np.save(bev_filename, pc_bev)
 
@@ -67,7 +85,7 @@ def generate_evaluation_set(dataset_root: str, map_sequence: str, query_sequence
             #     pass
             # else:            
             pc = load_lidar_file_nclt(reading_filepath).astype(np.float32)
-            pc_bev = generate_bev(pc, bounds=bounds).numpy()
+            pc_bev = generate_bev(pc, Z=bev_z, Y=bev_y, X=bev_x, bounds=bounds).numpy()
             print(f'Generating {bev_filename}')
             np.save(bev_filename, pc_bev)
                                 
@@ -104,47 +122,64 @@ def generate_evaluation_set(dataset_root: str, map_sequence: str, query_sequence
     # Filters out query elements without a corresponding map element within dist_threshold threshold
     query_set = filter_query_elements(query_set, map_set, dist_threshold)
 
-    print(f'{len(map_set)} database elements, {len(query_set)} query elements')
+    print(f'Number of map/database elements: {len(map_set)}')
+    print(f'Number of query elements before filtering: {query_count_before_filtering}')
+    print(f'Number of query elements after filtering: {len(query_set)}')
     return EvaluationSet(query_set, map_set)
 
 
+def _validate_nclt_inputs(dataset_root, sequences):
+    if not os.path.isdir(dataset_root):
+        raise FileNotFoundError(f'Cannot access dataset root: {dataset_root}')
+    missing = []
+    for seq in sequences:
+        seq_dir = os.path.join(dataset_root, seq)
+        pose_candidates = [
+            os.path.join(seq_dir, 'groundtruth_' + seq + '.csv'),
+            os.path.join(seq_dir, 'ground_truth', 'groundtruth_' + seq + '.csv'),
+        ]
+        if not os.path.isdir(seq_dir):
+            missing.append(f'session directory: {seq_dir}')
+        if not os.path.isdir(os.path.join(seq_dir, 'velodyne_sync')):
+            missing.append(f'lidar directory: {os.path.join(seq_dir, "velodyne_sync")}')
+        if not any(os.path.exists(path) for path in pose_candidates):
+            missing.append('ground truth file: ' + ' or '.join(pose_candidates))
+    if missing:
+        raise FileNotFoundError('Missing NCLT inputs:\n  ' + '\n  '.join(missing))
+
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Generate evaluation sets for NCLT dataset')
-    parser.add_argument('--dataset_root', type=str, default='~/Data/NCLT')
-    parser.add_argument('--map_sampling_distance', type=float, default=20.0) # 20.0, 30.0, ..., 100.0
-    parser.add_argument('--query_sampling_distance', type=float, default=5.0)
-    # Ignore query elements that do not have a corresponding map element within the given threshold (in meters)
-    parser.add_argument('--dist_threshold', type=float, default=50) # 25
+    parser = argparse.ArgumentParser(description='Generate the NCLT Protocol 1 final PR evaluation set')
+    parser.add_argument('--dataset_root', type=str, default='Data/NCLT')
     parser.add_argument('--bev', action='store_true', help='Generate bevs projected by point clouds')
     parser.add_argument('--sph', action='store_true', help='Generate panorama images')
     args = parser.parse_args()
+
+    map_sequence = PROTOCOL1_MAP_SEQUENCE
+    query_sequence = PROTOCOL1_QUERY_SEQUENCE
+    split = PROTOCOL1_SPLIT
+    map_sampling_distance = PROTOCOL1_MAP_SAMPLING_DISTANCE
+    query_sampling_distance = PROTOCOL1_QUERY_SAMPLING_DISTANCE
+    dist_threshold = PROTOCOL1_DIST_THRESHOLD
     
-    dataset_root = os.path.expanduser(args.dataset_root)
+    dataset_root = _ex(args.dataset_root)
     print(f'Dataset root: {dataset_root}')
-    print(f'Map minimum displacement between consecutive anchors: {args.map_sampling_distance}')
-    print(f'Query minimum displacement between consecutive anchors: {args.query_sampling_distance}')
-    print(f'Ignore query elements without a corresponding map element within a threshold [m]: {args.dist_threshold}')
+    print('Protocol: NCLT Protocol 1')
+    print(f'Map sequence: {map_sequence}')
+    print(f'Query sequence: {query_sequence}')
+    print(f'Split: {split}')
+    print(f'Map sampling distance: {map_sampling_distance}')
+    print(f'Query sampling distance: {query_sampling_distance}')
+    print(f'Distance threshold for query filtering: {dist_threshold}')
 
-    # Sequences is a list of (map sequence, query sequence)
-    multi_sequences = [
-                    #    ('2012-02-04', '2012-03-17'),
-                       ('2012-01-08', '2012-08-20'),
-                    #    ('2012-01-08', '2012-11-16'),
-                    #    ('2012-01-08', '2012-12-01'),
-                    #    ('2012-08-20', '2012-11-16'),
-                    #    ('2012-08-20', '2012-12-01'),
-                    #    ('2012-11-16', '2012-12-01')
-                       ]
-    
-    split = 'all' # 'test' or 'all'
-    for sequences in multi_sequences:
-        map_sequence, query_sequence = sequences
-        print(f'Map sequence: {map_sequence}')
-        print(f'Query sequence: {query_sequence}')
-
+    try:
+        _validate_nclt_inputs(dataset_root, [map_sequence, query_sequence])
         test_set = generate_evaluation_set(dataset_root, map_sequence, query_sequence, split=split, bev=args.bev, sph=args.sph,
-                map_sampling_distance=args.map_sampling_distance, query_sampling_distance=args.query_sampling_distance, dist_threshold=args.dist_threshold)
+                map_sampling_distance=map_sampling_distance, query_sampling_distance=query_sampling_distance, dist_threshold=dist_threshold)
+    except (AssertionError, FileNotFoundError) as exc:
+        raise SystemExit(str(exc))
 
-        pickle_name = f'{split}_{map_sequence}_{query_sequence}_{args.map_sampling_distance}_{args.query_sampling_distance}.pickle'
-        file_path_name = os.path.join(dataset_root, pickle_name)
-        test_set.save(file_path_name)
+    pickle_name = f'{split}_{map_sequence}_{query_sequence}_{map_sampling_distance}_{query_sampling_distance}.pickle'
+    file_path_name = os.path.join(dataset_root, pickle_name)
+    test_set.save(file_path_name)
+    print(f'Output pickle path: {file_path_name}')

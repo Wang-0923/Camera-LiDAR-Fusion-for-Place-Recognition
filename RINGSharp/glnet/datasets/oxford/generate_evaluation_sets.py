@@ -12,9 +12,13 @@ from glnet.datasets.base_datasets import EvaluationTuple, EvaluationSet
 from glnet.datasets.dataset_utils import filter_query_elements
 from glnet.datasets.panorama import generate_sph_image
 from glnet.utils.data_utils.point_clouds import visualize_2d_data, generate_bev
+from glnet.utils.common_utils import _ex
 
 bounds = (oxford_pc_bev_conf['x_bound'][0], oxford_pc_bev_conf['x_bound'][1], oxford_pc_bev_conf['y_bound'][0], \
           oxford_pc_bev_conf['y_bound'][1], oxford_pc_bev_conf['z_bound'][0], oxford_pc_bev_conf['z_bound'][1])
+bev_x = oxford_pc_bev_conf['x_grid']
+bev_y = oxford_pc_bev_conf['y_grid']
+bev_z = oxford_pc_bev_conf['z_grid']
 
 def get_scans(sequence: OxfordSequence) -> List[EvaluationTuple]:
     # Get a list of all readings from the test area in the sequence
@@ -52,7 +56,7 @@ def generate_evaluation_set(dataset_root: str, map_sequence: str, query_sequence
             #     pass
             # else:
             pc, _ = pc_loader(file_pathname)
-            pc_bev = generate_bev(pc, bounds=bounds).numpy()
+            pc_bev = generate_bev(pc, Z=bev_z, Y=bev_y, X=bev_x, bounds=bounds).numpy()
             # for i in range(pc_bev.shape[0]):
             #     visualize_2d_data(pc_bev[i], f'bev_{i}.jpg')
             print(f'Generating {bev_filename}')
@@ -67,7 +71,7 @@ def generate_evaluation_set(dataset_root: str, map_sequence: str, query_sequence
             #     pass
             # else:
             pc, _ = pc_loader(file_pathname)
-            pc_bev = generate_bev(pc, bounds=bounds).numpy()
+            pc_bev = generate_bev(pc, Z=bev_z, Y=bev_y, X=bev_x, bounds=bounds).numpy()
             print(f'Generating {bev_filename}')
             np.save(bev_filename, pc_bev)
 
@@ -106,7 +110,7 @@ def generate_evaluation_set(dataset_root: str, map_sequence: str, query_sequence
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate evaluation sets for Oxford dataset')
-    parser.add_argument('--dataset_root', type=str, default='~/Data/Oxford_radar')
+    parser.add_argument('--dataset_root', type=str, default='Data/Oxford_radar')
     parser.add_argument('--map_sampling_distance', type=float, default=20.0) # 20.0, 30.0, ..., 100.0
     parser.add_argument('--query_sampling_distance', type=float, default=5.0)
     # Ignore query elements that do not have a corresponding map element within the given threshold (in meters)
@@ -115,7 +119,7 @@ if __name__ == '__main__':
     parser.add_argument('--sph', action='store_true', help='Generate panorama images')
     args = parser.parse_args()
 
-    dataset_root = os.path.expanduser(args.dataset_root)
+    dataset_root = _ex(args.dataset_root)
     print(f'Dataset root: {dataset_root}')
     print(f'Map minimum displacement between consecutive anchors: {args.map_sampling_distance}')
     print(f'Query minimum displacement between consecutive anchors: {args.query_sampling_distance}')

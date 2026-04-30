@@ -54,7 +54,7 @@ class GLEvaluator(Evaluator):
                  radius: List[float], k: int = 20, n_samples = None, debug: bool = False):
         super().__init__(dataset_root, dataset_type, eval_set_pickle, device, params, radius, k, n_samples, debug=debug)
         # self.params = params
-        image_meta_path = os.path.expanduser(self.params.image_meta_path)
+        image_meta_path = _ex(self.params.image_meta_path)
         with open(image_meta_path, 'rb') as handle:
             image_meta = pickle.load(handle)
         __p = lambda x: basic.pack_seqdim(x, 1)
@@ -619,7 +619,7 @@ class GLEvaluator(Evaluator):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Evaluate Fusion model')
-    parser.add_argument('--dataset_root', type=str, default='~/Data/NCLT', help='Path to the dataset root')
+    parser.add_argument('--dataset_root', type=str, default='Data/NCLT', help='Path to the dataset root')
     parser.add_argument('--dataset_type', type=str, default='nclt', choices=['mulran', 'southbay', 'kitti', 'nclt','oxford'])
     parser.add_argument('--eval_set', type=str, default='test_2012-02-04_2012-03-17_20.0_5.0.pickle', help='File name of the evaluation pickle (must be located in dataset_root')
     parser.add_argument('--radius', type=float, nargs='+', default=[2, 5, 10, 20, 25], help='True Positive thresholds in meters')
@@ -637,7 +637,7 @@ if __name__ == "__main__":
     parser.add_argument('--one_shot', action='store_true', help='Perform one-shot global localization without place recognition threshold limits')
     
     args = parser.parse_args()
-    dataset_root = os.path.expanduser(args.dataset_root)
+    dataset_root = _ex(args.dataset_root)
     print(f'Dataset root: {dataset_root}')
     print(f'Dataset type: {args.dataset_type}')
     print(f'Evaluation set: {args.eval_set}')

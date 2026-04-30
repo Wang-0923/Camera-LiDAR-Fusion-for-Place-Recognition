@@ -10,7 +10,7 @@ use_pretrained_model = True
 
 # image_encoder: res18, res50, res101, res50, effb0, effb4, superpoint, vovnet99
 # point_encoder: voxel, focal, unet
-image_meta_path = ~/Data/NCLT/image_meta.pkl
+image_meta_path = Data/NCLT/image_meta.pkl
 image_encoder = res50
 point_encoder = unet
 

@@ -3,7 +3,8 @@
 from glnet.models.localizer.mixvpr import MixVPRModel
 from glnet.models.localizer.anyloc import AnyLocWrapper
 from glnet.models.localizer.sfrs import SFRSModel
-from RINGSharp.glnet.models.localizer.ring_sharp_v import RINGSharpV
+from glnet.models.localizer.ring_sharp_v import RINGSharpV
+from glnet.models.localizer.ring_sharp_vl import RINGSharpVL
 from glnet.models.localizer.vdisco import vDiSCO
 from glnet.models.localizer.netvlad import NetVLAD, NetVLAD_Pretrain
 from glnet.models.localizer.patch_netvlad import PatchNetVLAD_Pretrain
@@ -34,7 +35,11 @@ class L2Norm(nn.Module):
 
 
 def model_factory(model_params: ModelParams):
-    if 'mixvpr' in model_params.model:
+    if model_params.enable_bev_fusion:
+        if not model_params.use_rgb:
+            raise ValueError('enable_bev_fusion=True requires use_rgb=True so the visual BEV branch can be built')
+        model = RINGSharpVL(model_params)
+    elif 'mixvpr' in model_params.model:
         model = MixVPRModel(model_params)
     elif 'anyloc' in model_params.model:
         model = AnyLocWrapper()

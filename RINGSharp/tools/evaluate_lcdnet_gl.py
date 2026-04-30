@@ -524,7 +524,7 @@ def get_ransac_result(feat1, feat2, kp1, kp2, ransac_dist_th=0.5, ransac_max_it=
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Evaluate MinkLoc model')
-    parser.add_argument('--dataset_root', type=str, default='~/Data/NCLT', help='Path to the dataset root')
+    parser.add_argument('--dataset_root', type=str, default='Data/NCLT', help='Path to the dataset root')
     parser.add_argument('--dataset_type', type=str, default='nclt', choices=['mulran', 'southbay', 'kitti', 'nclt','oxford'])
     parser.add_argument('--eval_set', type=str, default='test_2012-02-04_2012-03-17_20.0_5.0.pickle', help='File name of the evaluation pickle (must be located in dataset_root')
     parser.add_argument('--radius', type=float, nargs='+', default=[2, 5, 10, 20, 25], help='True Positive thresholds in meters')

@@ -7,6 +7,7 @@ import torch
 import pickle
 import matplotlib.cm as cm
 from scipy.spatial.transform import Rotation
+from glnet.utils.common_utils import _ex
 from glnet.models.extractor_matcher.superpoint import SuperPoint
 from glnet.models.extractor_matcher.matching import Matching
 from glnet.models.extractor_matcher.utils import scale_intrinsics, process_resize, estimate_pose, make_matching_plot
@@ -316,7 +317,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     dataset = 'nclt'
-    image_meta_path = os.path.expanduser("~/Data/NCLT/image_meta.pkl")
+    image_meta_path = _ex('Data/NCLT/image_meta.pkl')
     with open(image_meta_path, 'rb') as handle:
         image_meta = pickle.load(handle)
     K = np.array(image_meta['K'])

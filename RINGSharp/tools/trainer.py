@@ -68,8 +68,14 @@ def tensors_to_numbers(stats):
 
 
 def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight=None, do_val=False, device='cpu'):
+    is_ring_sharp = 'ring_sharp' in params.model_params.model
+    is_pr_only = params.model_params.task == 'pr_only'
+
     # Import evaluator
-    if 'ring_sharp' in params.model_params.model:
+    if is_ring_sharp and is_pr_only:
+        from evaluate_pr import PREvaluator
+        GLEvaluator = PREvaluator
+    elif is_ring_sharp:
         # from evaluate_ours_pe import GLEvaluator # PE
         from evaluate_ours_gl import GLEvaluator # GL
     else:
@@ -95,18 +101,21 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
     # Move the model to the proper device before configuring the optimizer
     model.to(device)
     model = nn.DataParallel(model)
-    if params.model_params.use_rgb:
-        feature_dim = backbone_conf['output_channels']
-        trans_cnn = last_conv_block(feature_dim, feature_dim, bn=True) 
+    if is_ring_sharp and is_pr_only:
+        trans_cnn = None
     else:
-        if params.model_params.use_bev:
-            feature_dim = params.model_params.feature_dim
-            mid_channels = params.model_params.feature_dim
+        if params.model_params.use_rgb:
+            feature_dim = backbone_conf['output_channels']
+            trans_cnn = last_conv_block(feature_dim, feature_dim, bn=True)
         else:
-            feature_dim = params.model_params.feature_dim
-            mid_channels = feature_dim
-        trans_cnn = last_conv_block(feature_dim, mid_channels, bn=False)
-    trans_cnn = trans_cnn.to(device)
+            if params.model_params.use_bev:
+                feature_dim = params.model_params.feature_dim
+                mid_channels = params.model_params.feature_dim
+            else:
+                feature_dim = params.model_params.feature_dim
+                mid_channels = feature_dim
+            trans_cnn = last_conv_block(feature_dim, mid_channels, bn=False)
+        trans_cnn = trans_cnn.to(device)
     
     if resume:
         if 'netvlad_pretrain' in params.model_params.model:
@@ -116,10 +125,13 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
                 print('Renaming {} to {}'.format(key, new_key))
                 checkpoint['state_dict'][new_key] = checkpoint['state_dict'].pop(key)
             model.load_state_dict(checkpoint['state_dict'])
-        elif 'ring_sharp' in params.model_params.model:
+        elif is_ring_sharp and not is_pr_only:
             checkpoint = torch.load(weight, map_location=device)
             model.load_state_dict(checkpoint['model'], strict=False)
             trans_cnn.load_state_dict(checkpoint['trans_cnn'], strict=True)
+        elif is_ring_sharp and is_pr_only:
+            checkpoint = torch.load(weight, map_location=device)
+            model.load_state_dict(checkpoint['model'], strict=False)
         else:
             checkpoint = torch.load(weight, map_location=device)
             model.load_state_dict(checkpoint['model'], strict=True)
@@ -143,12 +155,12 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
 
     # Training elements
     if params.weight_decay is None or params.weight_decay == 0:
-        if 'ring_sharp' in params.model_params.model:
+        if is_ring_sharp and not is_pr_only:
             optimizer = torch.optim.Adam([{'params':model.parameters()},{'params':trans_cnn.parameters()}], lr=params.lr)
         else:
             optimizer = torch.optim.Adam(model.parameters(), lr=params.lr)
     else:
-        if 'ring_sharp' in params.model_params.model:
+        if is_ring_sharp and not is_pr_only:
             optimizer = torch.optim.Adam([{'params':model.parameters()},{'params':trans_cnn.parameters()}], lr=params.lr, weight_decay=params.weight_decay)
         else:
             optimizer = torch.optim.Adam(model.parameters(), lr=params.lr, weight_decay=params.weight_decay)
@@ -165,7 +177,10 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
 
     radius = [2, 5, 10, 20, 25]
 
-    evaluator_test_set = GLEvaluator(params.dataset_folder, params.dataset, params.test_file, device=device, params=params.model_params, radius=radius, k=20, n_samples=None)
+    if is_ring_sharp and is_pr_only:
+        evaluator_test_set = GLEvaluator(params.dataset_folder, params.dataset, params.test_file, device=device, params=params.model_params, radius=[10.0], k=10, n_samples=None)
+    else:
+        evaluator_test_set = GLEvaluator(params.dataset_folder, params.dataset, params.test_file, device=device, params=params.model_params, radius=radius, k=20, n_samples=None)
 
     if do_val:
         phases = ['train', 'val']
@@ -207,7 +222,8 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
                     if batch[key] is not None:
                         if key == 'orig_pc':
                             continue
-                        batch[key] = batch[key].to(device)
+                        if hasattr(batch[key], 'to'):
+                            batch[key] = batch[key].to(device)
 
                 n_positives = torch.sum(positives_mask).item()
                 n_negatives = torch.sum(negatives_mask).item()
@@ -230,7 +246,10 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
                     trans_stat = {}
                     depth_stat = {}
 
-                    if 'ring_sharp' in params.model_params.model:
+                    if is_ring_sharp and is_pr_only:
+                        embedding = y['global']
+                        pr_loss, pr_stat, _ = pr_loss_fn(embedding, positives_mask, negatives_mask)
+                    elif is_ring_sharp:
                         bev = y['bev']
                         spec = y['spec']
                         bev_trans = y['bev_trans']
@@ -268,7 +287,7 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
                     temp_stats = {**pr_stat, **yaw_stat, **trans_stat, **depth_stat}
                     
                     # total loss
-                    total_loss = torch.zeros(1).cuda()
+                    total_loss = torch.zeros(1, device=device)
                     if pr_loss is not None:
                         total_loss += pr_loss
                         train_writer.add_scalar('PR_Loss', temp_stats['pr_loss'], num_iter)
@@ -299,7 +318,7 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
             
             if epoch % params.save_freq == 0 and phase == 'train':
                 save_path = os.path.join(weights_path, model_name + '_' + str(epoch) + '.pth')
-                if 'ring_sharp' in params.model_params.model:
+                if is_ring_sharp and not is_pr_only:
                     torch.save({'epoch': epoch,
                                 'iter': num_iter,
                                 'model': model.state_dict(), 
@@ -339,7 +358,7 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
 
         if epoch % params.eval_freq == 0:
             print('------ eval ------')
-            if 'ring_sharp' in params.model_params.model:
+            if is_ring_sharp and not is_pr_only:
                 global_metrics = evaluator_test_set.evaluate(model, trans_cnn, exp_name)
             else:
                 global_metrics = evaluator_test_set.evaluate(model, exp_name)
@@ -375,7 +394,7 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
 
     # Save final model weights
     final_model_path = os.path.join(weights_path, model_name + '_final.pth')
-    if 'ring_sharp' in params.model_params.model:
+    if is_ring_sharp and not is_pr_only:
         torch.save({'epoch':epoch,
                     'iter':num_iter,
                     'model':model.state_dict(), 
@@ -388,7 +407,7 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
                     final_model_path)
     
     # Evaluate the final model using all samples
-    if 'ring_sharp' in params.model_params.model:
+    if is_ring_sharp and not is_pr_only:
         global_metrics = evaluator_test_set.evaluate(model, trans_cnn, exp_name)
     else:
         global_metrics = evaluator_test_set.evaluate(model, exp_name)    

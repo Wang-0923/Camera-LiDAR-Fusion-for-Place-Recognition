@@ -11,6 +11,7 @@ import glnet.utils.vox_utils.geom as geom
 import glnet.utils.vox_utils.basic as basic
 from glnet.models.attention.attentions import SpatialCrossAttention, VanillaSelfAttention
 from glnet.utils.params import ModelParams
+from glnet.utils.common_utils import _ex
 
 from torchvision.models.resnet import resnet18
 from efficientnet_pytorch import EfficientNet
@@ -270,7 +271,7 @@ class vDiSCO(nn.Module):
                                         bounds=model_params.bounds,
                                         assert_cube=False)
 
-        self.image_meta_path = os.path.expanduser(model_params.image_meta_path)
+        self.image_meta_path = _ex(model_params.image_meta_path)
         self.conv = nn.Conv2d(in_channels=self.feature_dim, out_channels=1, kernel_size=3, padding=1, stride=1)
         self.gem_conv = nn.Conv2d(in_channels=self.feature_dim, out_channels=self.feature_dim, kernel_size=3, padding=1, stride=1)
 
@@ -463,5 +464,4 @@ class vDiSCO(nn.Module):
         print('Total parameters: {}'.format(n_params))
         n_params = sum([param.nelement() for param in self.encoder.parameters()])
         print('Image Backbone parameters: {}'.format(n_params))
-
 

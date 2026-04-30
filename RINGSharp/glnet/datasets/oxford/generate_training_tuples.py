@@ -19,6 +19,9 @@ import time
 ICP_REFINE = False
 bounds = (oxford_pc_bev_conf['x_bound'][0], oxford_pc_bev_conf['x_bound'][1], oxford_pc_bev_conf['y_bound'][0], \
           oxford_pc_bev_conf['y_bound'][1], oxford_pc_bev_conf['z_bound'][0], oxford_pc_bev_conf['z_bound'][1])
+bev_x = oxford_pc_bev_conf['x_grid']
+bev_y = oxford_pc_bev_conf['y_grid']
+bev_z = oxford_pc_bev_conf['z_grid']
 
 def get_model_name(model):
     if model == 'stereo':
@@ -75,7 +78,7 @@ def generate_image_meta_pickle(dataset_root: str):
             T.append(np.dot(np.linalg.inv(T_cam_matrix), T_matrix))
 
     image_meta = {'K': K, 'T': T}
-    with open(dataset_root, 'image_meta.pkl', 'wb') as handle:
+    with open(os.path.join(dataset_root, 'image_meta.pkl'), 'wb') as handle:
         pickle.dump(image_meta, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
@@ -94,7 +97,7 @@ def generate_training_tuples(ds: OxfordSequences, pos_threshold: float = 25, neg
             # if os.path.exists(bev_filename):
             #     pass
             # else:
-            pc_bev = generate_bev(pc, bounds=bounds).numpy()
+            pc_bev = generate_bev(pc, Z=bev_z, Y=bev_y, X=bev_x, bounds=bounds).numpy()
             # for i in range(pc_bev.shape[0]):
             #     visualize_2d_data(pc_bev[i], f'bev_{i}.jpg')         
             print(f'Generating {bev_filename}')
@@ -159,7 +162,7 @@ def generate_training_tuples(ds: OxfordSequences, pos_threshold: float = 25, neg
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate training tuples')
-    parser.add_argument('--dataset_root', type=str, default='~/Data/Oxford_radar')
+    parser.add_argument('--dataset_root', type=str, default='Data/Oxford_radar')
     parser.add_argument('--pos_threshold', default=25.0)
     parser.add_argument('--neg_threshold', default=50.0)
     parser.add_argument('--sampling_distance', type=float, default=0.2)

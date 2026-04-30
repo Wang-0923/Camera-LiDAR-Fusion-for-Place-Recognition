@@ -16,6 +16,7 @@ import argparse
 import re
 import os
 from tqdm import tqdm
+from glnet.utils.common_utils import _ex
 
 class Undistort(object):
 
@@ -73,10 +74,10 @@ def mkdir(path):
 
 def main():
     parser = argparse.ArgumentParser(description="Preprocess images")
-    parser.add_argument('--dataset_root', type=str, default='~/Data/NCLT', help='path to dataset')
+    parser.add_argument('--dataset_root', type=str, default='Data/NCLT', help='path to dataset')
     parser.add_argument('--seqs', nargs='+', help='<Required> Set flag', required=True)
     args = parser.parse_args()
-    dataset_root = os.path.expanduser(args.dataset_root)
+    dataset_root = _ex(args.dataset_root)
     seqs = args.seqs
 
     for seq in seqs:

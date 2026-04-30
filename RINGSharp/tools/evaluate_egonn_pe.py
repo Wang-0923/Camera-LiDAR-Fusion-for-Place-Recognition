@@ -22,6 +22,7 @@ from sklearn.neighbors import KDTree
 from sklearn.preprocessing import MinMaxScaler
 from glnet.models.utils import *
 from glnet.config.config import *
+from glnet.utils.common_utils import _ex
 
 from tools.evaluator import Evaluator
 from tools.plot_PR_curve import compute_PR_pairs
@@ -331,7 +332,7 @@ def calculate_repeatability(kp1, kp2, T_gt, threshold: float):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Evaluate MinkLoc model')
-    parser.add_argument('--dataset_root', type=str, default='~/Data/NCLT', help='Path to the dataset root')
+    parser.add_argument('--dataset_root', type=str, default='Data/NCLT', help='Path to the dataset root')
     parser.add_argument('--dataset_type', type=str, default='nclt', choices=['mulran', 'southbay', 'kitti', 'nclt','oxford'])
     parser.add_argument('--eval_set', type=str, default='test_2012-02-04_2012-03-17_20.0_5.0.pickle', help='File name of the evaluation pickle (must be located in dataset_root')
     parser.add_argument('--radius', type=float, nargs='+', default=[2, 5, 10, 20, 25], help='True Positive thresholds in meters')
@@ -350,7 +351,7 @@ if __name__ == "__main__":
     parser.add_argument('--exp_name', type=str, default=None, help='Experiment name for evaluation')
     
     args = parser.parse_args()
-    dataset_root = os.path.expanduser(args.dataset_root)
+    dataset_root = _ex(args.dataset_root)
     print(f'Dataset root: {dataset_root}')
     print(f'Dataset type: {args.dataset_type}')
     print(f'Evaluation set: {args.eval_set}')

@@ -103,7 +103,7 @@ def ssc_to_homo(ssc):
 
 def project_vel_to_cam(hits, cam_num):
     # Load camera parameters    
-    image_meta_path = _ex('~/Data/NCLT/image_meta.pkl')
+    image_meta_path = _ex('Data/NCLT/image_meta.pkl')
     with open(image_meta_path, 'rb') as handle:
         image_meta = pickle.load(handle)
     intrins = np.array(image_meta['K'])
@@ -117,7 +117,7 @@ def project_vel_to_cam(hits, cam_num):
 
 def project_vel_to_cam_oxford(hits, cam_num):
     # Load camera parameters
-    image_meta_path = _ex('~/Data/Oxford_radar/image_meta.pkl')
+    image_meta_path = _ex('Data/Oxford_radar/image_meta.pkl')
     with open(image_meta_path, 'rb') as handle:
         image_meta = pickle.load(handle)
     intrins = np.array(image_meta['K'])

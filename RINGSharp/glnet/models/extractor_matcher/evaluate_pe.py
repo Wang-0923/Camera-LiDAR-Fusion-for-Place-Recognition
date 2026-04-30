@@ -33,6 +33,7 @@ from glnet.models.localizer.ring_sharp_v import RINGSharpV
 from glnet.models.extractor_matcher.matching import Matching 
 from glnet.models.extractor_matcher.match_features_demo import preprocess_image, match_descriptors
 from glnet.models.extractor_matcher.utils import remove_none_values, remove_at_indices, assign_matched_cams, convert_to_3d, scale_intrinsics, estimate_pose, solve_pnp, estimate_pose_ransac_3d3d, make_matching_plot
+from glnet.utils.common_utils import _ex
 from tools.evaluator import Evaluator
 from tools.plot_pose_errors import plot_cdf, cal_recall_pe
 
@@ -51,7 +52,7 @@ class GLEvaluator(Evaluator):
                  radius: List[float], k: int = 20, n_samples = None, debug: bool = False):
         super().__init__(dataset_root, dataset_type, eval_set_pickle, device, params, radius, k, n_samples, debug=debug)
         # self.params = params
-        image_meta_path = os.path.expanduser(self.params.image_meta_path)
+        image_meta_path = _ex(self.params.image_meta_path)
         with open(image_meta_path, 'rb') as handle:
             image_meta = pickle.load(handle)
         __p = lambda x: basic.pack_seqdim(x, 1)
@@ -455,7 +456,7 @@ class GLEvaluator(Evaluator):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Evaluate Fusion model')
-    parser.add_argument('--dataset_root', type=str, default='~/Data/NCLT', help='Path to the dataset root')
+    parser.add_argument('--dataset_root', type=str, default='Data/NCLT', help='Path to the dataset root')
     parser.add_argument('--dataset_type', type=str, default='nclt', choices=['mulran', 'southbay', 'kitti', 'nclt','oxford'])
     parser.add_argument('--eval_set', type=str, default='test_2012-02-04_2012-03-17_20.0_5.0.pickle', help='File name of the evaluation pickle (must be located in dataset_root')
     parser.add_argument('--radius', type=float, nargs='+', default=[2, 5, 10, 20, 25], help='True Positive thresholds in meters')
@@ -472,7 +473,7 @@ if __name__ == "__main__":
     parser.add_argument('--pnp', action='store_true', help='Convert the 2D keypoints of map images to 3D points')
     
     args = parser.parse_args()
-    dataset_root = os.path.expanduser(args.dataset_root)    
+    dataset_root = _ex(args.dataset_root)    
     print(f'Dataset root: {dataset_root}')
     print(f'Dataset type: {args.dataset_type}')
     print(f'Evaluation set: {args.eval_set}')

@@ -11,7 +11,7 @@ import random
 import struct
 from glnet.datasets.nclt.utils import read_lidar_poses, in_test_split, in_train_split
 from glnet.utils.data_utils.point_clouds import PointCloudLoader, PointCloudWithImageLoader
-from glnet.utils.common_utils import ssc_to_homo
+from glnet.utils.common_utils import _ex, ssc_to_homo
 import matplotlib.pyplot as plt
 
 
@@ -150,6 +150,7 @@ class NCLTSequence(Dataset):
     Dataset returns a point cloud from a train or test split from one sequence from a raw NCLT dataset
     """
     def __init__(self, dataset_root: str, sequence_name: str, split: str, sampling_distance: float = 0.2):
+        dataset_root = _ex(dataset_root)
         assert os.path.exists(dataset_root), f'Cannot access dataset root: {dataset_root}'
         assert split in ['train', 'test', 'all']
 
@@ -162,8 +163,12 @@ class NCLTSequence(Dataset):
         # Maximum discrepancy between timestamps of LiDAR scan and global pose in seconds
         self.pose_time_tolerance = 1.
 
-        self.pose_file = os.path.join(sequence_path, 'groundtruth_'+self.sequence_name+'.csv')
-        assert os.path.exists(self.pose_file), f'Cannot access ground truth file: {self.pose_file}'
+        pose_candidates = [
+            os.path.join(sequence_path, 'groundtruth_' + self.sequence_name + '.csv'),
+            os.path.join(sequence_path, 'ground_truth', 'groundtruth_' + self.sequence_name + '.csv'),
+        ]
+        self.pose_file = next((path for path in pose_candidates if os.path.exists(path)), None)
+        assert self.pose_file is not None, f'Cannot access ground truth file in {pose_candidates}'
 
         self.rel_lidar_path = os.path.join(self.sequence_name, 'velodyne_sync')
         lidar_path = os.path.join(self.dataset_root, self.rel_lidar_path)
@@ -312,7 +317,7 @@ class NCLTSequences(Dataset):
 
 
 if __name__ == '__main__':
-    dataset_root = os.path.expanduser('~/Data/NCLT/')
+    dataset_root = _ex('Data/NCLT')
     sequence_names = ['2012-02-04']
 
     db = NCLTSequences(dataset_root, sequence_names, split='test')
@@ -321,4 +326,3 @@ if __name__ == '__main__':
 
     res = db.find_neighbours_ndx(e['position'], radius=50)
     print('.')
-

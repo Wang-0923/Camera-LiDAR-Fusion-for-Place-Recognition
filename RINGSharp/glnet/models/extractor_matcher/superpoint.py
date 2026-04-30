@@ -44,6 +44,7 @@ import os
 from pathlib import Path
 import torch
 from torch import nn
+from glnet.utils.common_utils import _ex
 
 def simple_nms(scores, nms_radius: int):
     """ Fast Non-maximum suppression to remove nearby points """
@@ -135,7 +136,7 @@ class SuperPoint(nn.Module):
             c5, self.config['descriptor_dim'],
             kernel_size=1, stride=1, padding=0)
 
-        path = os.path.expanduser('~/Data/weights/superpoint_v1.pth')
+        path = _ex('Data/weights/superpoint_v1.pth')
         self.load_state_dict(torch.load(str(path)))
 
         mk = self.config['max_keypoints']

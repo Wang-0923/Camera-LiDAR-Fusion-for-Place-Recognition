@@ -11,6 +11,7 @@ from glnet.datasets.base_datasets import TrainingDataset, EvaluationTuple
 from glnet.datasets.augmentation import TrainTransform, TrainSetTransform, TrainRGBTransform, ValRGBTransform
 from glnet.datasets.samplers import BatchSampler
 from glnet.utils.params import TrainingParams
+from glnet.utils.data_utils.bev_common import build_bev_alignment_meta
 
 def make_datasets(params: TrainingParams, validation=True):
     # Create training and validation datasets
@@ -112,6 +113,20 @@ def make_collate_fn(dataset: TrainingDataset, params: TrainingParams):
             batch = {'orig_pc': clouds, 'depth': depths, 'img': images}
         else:
             batch = {'orig_pc': clouds, 'pc': clouds_quant, 'img': images}
+
+        if params.model_params.enable_bev_fusion:
+            if params.model_params.xyz_aug:
+                raise ValueError('enable_bev_fusion=True requires xyz_aug=False in the current dataset pipeline')
+            batch['bev_meta'] = [
+                build_bev_alignment_meta(
+                    sample_id=label,
+                    timestamp=dataset.queries[label].timestamp,
+                    dataset_type=params.dataset,
+                    pose=dataset.queries[label].pose,
+                    xyz_aug=params.model_params.xyz_aug,
+                )
+                for label in labels
+            ]
 
         # Returns (batch_size, n_points, 3) tensor and positives_mask and negatives_mask which are
         # batch_size x batch_size boolean tensors

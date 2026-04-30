@@ -6,6 +6,7 @@ import time
 import numpy as np
 import torch
 from glnet.datasets.quantization import PolarQuantizer, CartesianQuantizer, PassThroughQuantizer, EgoNNPolarQuantizer
+from glnet.utils.common_utils import _ex, get_default_image_meta_path
 
 class ModelParams:
     def __init__(self, model_params_path, dataset_type, dataset_folder):
@@ -13,10 +14,13 @@ class ModelParams:
         config.read(model_params_path)
         params = config['MODEL']
 
-        self.dataset_folder = os.path.expanduser(dataset_folder)
+        self.dataset_folder = _ex(dataset_folder)
         self.dataset_type = dataset_type
         self.model_params_path = model_params_path
         self.model = params.get('model')
+        self.task = params.get('task', 'global_localization').lower()
+        self.descriptor_from_spec = params.getboolean('descriptor_from_spec', False)
+        self.global_descriptor_dim = params.getint('global_descriptor_dim', params.getint('output_dim', 256))
         self.use_rgb = params.getboolean('use_rgb', False)
         self.use_mask = params.getboolean('use_mask', False)
         self.use_depth = params.getboolean('use_depth', False)
@@ -31,6 +35,19 @@ class ModelParams:
         self.deform_attn = params.getboolean('deform_attn', False)
         self.normalize = params.getboolean('normalize', True)
         self.confidence = params.getboolean('confidence', False)
+        self.enable_bev_fusion = params.getboolean('enable_bev_fusion', False)
+        self.bev_fusion_visual_channels = params.getint('bev_fusion_visual_channels', 80)
+        self.bev_fusion_lidar_channels = params.getint('bev_fusion_lidar_channels', 128)
+        self.bev_fusion_attn_channels = params.getint('bev_fusion_attn_channels', 128)
+        self.bev_fusion_out_channels = params.getint('bev_fusion_out_channels', self.bev_fusion_attn_channels)
+        self.bev_fusion_num_heads = params.getint('bev_fusion_num_heads', 8)
+        self.bev_fusion_num_levels = params.getint('bev_fusion_num_levels', 4)
+        self.bev_fusion_num_points = params.getint('bev_fusion_num_points', 4)
+        self.bev_fusion_dropout = params.getfloat('bev_fusion_dropout', 0.0)
+        self.bev_fusion_drop_path = params.getfloat('bev_fusion_drop_path', 0.0)
+        self.bev_fusion_strict_meta = params.getboolean('bev_fusion_strict_meta', False)
+        self.bev_fusion_timestamp_tolerance_ms = params.getfloat('bev_fusion_timestamp_tolerance_ms', 50.0)
+        self.bev_fusion_prefer_cuda_ms_deform_attn = params.getboolean('bev_fusion_prefer_cuda_ms_deform_attn', True)
 
         self.aggregation = params.get('aggregation','gem').lower()
         self.lidar_fix_num = params.getint('lidar_fix_num', 20000)
@@ -76,7 +93,7 @@ class ModelParams:
             self.bounds = None
 
         if 'image_meta_path' in params:
-            self.image_meta_path = params.get('image_meta_path', os.path.expanduser('~/Data/NCLT/image_meta.pkl'))
+            self.image_meta_path = _ex(params.get('image_meta_path', get_default_image_meta_path(dataset_type)))
         else:
             self.image_meta_path = None
 
@@ -154,7 +171,7 @@ class TrainingParams:
     """
     Parameters for model training
     """
-    def __init__(self, params_path, model_params_path):
+    def __init__(self, params_path, model_params_path, dataset_type=None, dataset_root=None):
         """
         Configuration files
         :param path: Training configuration file
@@ -170,9 +187,9 @@ class TrainingParams:
 
         config.read(self.params_path)
         params = config['DEFAULT']
-        self.dataset = params.get('dataset', 'nclt').lower()
+        self.dataset = (dataset_type or params.get('dataset', 'nclt')).lower()
         assert self.dataset in ['nclt', 'oxford'], '{} is not supported'.format(self.dataset)
-        self.dataset_folder = os.path.expanduser(params.get('dataset_folder'))
+        self.dataset_folder = _ex(dataset_root or params.get('dataset_folder'))
 
         # Maximum random rotation and translation applied when generating pairs for local descriptor
         self.rot_max = params.getfloat('rot_max', np.pi)
@@ -237,4 +254,3 @@ class TrainingParams:
         
         self.model_params.print()
         print('')
-

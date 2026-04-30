@@ -1,0 +1,48 @@
+[MODEL]
+task = pr_only
+model = ring_sharp_vl_pr_nclt
+descriptor_from_spec = True
+global_descriptor_dim = 256
+
+use_rgb = True
+use_bev = True
+xyz_aug = False
+cam_id = 0,1,2,3,4
+
+use_depth = False
+use_submap = False
+use_pretrained_model = True
+
+use_xyz = False
+normalize = True
+aggregation = fft
+confidence = False
+
+image_meta_path = Data/NCLT/image_meta.pkl
+image_encoder = depth
+point_encoder = unet
+
+enable_bev_fusion = True
+bev_fusion_visual_channels = 80
+bev_fusion_lidar_channels = 128
+bev_fusion_attn_channels = 128
+bev_fusion_out_channels = 128
+feature_dim = 128
+bev_fusion_num_heads = 8
+bev_fusion_num_levels = 4
+bev_fusion_num_points = 4
+bev_fusion_dropout = 0.0
+bev_fusion_prefer_cuda_ms_deform_attn = True
+bev_fusion_strict_meta = True
+bev_fusion_timestamp_tolerance_ms = 50.0
+
+output_dim = 256
+
+loss = BatchHardTripletMarginLoss
+margin = 0.2
+
+radius = 40
+theta = 100
+
+Height = 224
+Width = 384

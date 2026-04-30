@@ -6,7 +6,6 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.parallel
 import torch.nn.functional as F
-from torch_radon import Radon, ParallelBeam, RadonFanbeam
 
 from mmcv.ops import Voxelization
 import glnet.utils.vox_utils.geom as geom
@@ -21,6 +20,8 @@ EPS = 1e-4
 from glnet.models.aggregation.GeM import GeM
 from glnet.models.aggregation.NetVLADLoupe import NetVLADLoupe
 from glnet.models.backbones_2d.steerable_cnn import SteerableCNN
+from glnet.models.localizer.ring_sharp_vl import run_ring_sharp_downstream
+from glnet.models.localizer.spec_head import SpecGlobalDescriptorHead
 
 
 class RINGSharpL(nn.Module):
@@ -37,6 +38,8 @@ class RINGSharpL(nn.Module):
         self.bev_encoder = model_params.bev_encoder
         self.feature_dim = model_params.feature_dim
         self.output_dim = model_params.output_dim
+        self.descriptor_from_spec = model_params.descriptor_from_spec
+        self.global_descriptor_dim = model_params.global_descriptor_dim
         self.use_submap = model_params.use_submap
 
         self.theta = model_params.theta
@@ -70,48 +73,16 @@ class RINGSharpL(nn.Module):
         else:
             mid_channels = model_params.feature_dim
             self.encoder_yaw = last_conv_block(self.feature_dim, mid_channels, bn=False)
+
+        if self.descriptor_from_spec:
+            self.spec_descriptor_head = SpecGlobalDescriptorHead(output_dim=self.global_descriptor_dim)
             
-    def forward_row_fft(self, input):
-        median_output = torch.fft.fft2(input, dim=-1, norm='ortho')
-        median_output_r = median_output.real
-        median_output_i = median_output.imag
-        output = torch.sqrt(median_output_r ** 2 + median_output_i ** 2 + 1e-15)
-        return output, median_output
+    def extract_lidar_bev(self, batch):
+        pc = batch['pc']
+        if pc.ndim != 4:
+            raise ValueError(f'Expected batch["pc"] with shape (B, C, H, W), got {tuple(pc.shape)}')
 
-    def forward_column_fft(self, input):
-        median_output = torch.fft.fft2(input, dim=-2, norm='ortho')
-        median_output_r = median_output.real
-        median_output_i = median_output.imag
-        output = torch.sqrt(median_output_r ** 2 + median_output_i ** 2 + 1e-15)
-        output = torch.fft.fftshift(output)
-        return output, median_output
-
-    def forward_fft(self, input):
-        median_output = torch.fft.fft2(input, norm='ortho')
-        output = torch.sqrt(median_output.real ** 2 + median_output.imag ** 2 + 1e-15)
-        output = torch.fft.fftshift(output)
-        return output, median_output
-    
-    def compute_spec(self, x, rot_ang=2*np.pi):
-        # Radon Transform
-        n_angles = x.shape[-2]
-        image_size = x.shape[-1]
-        angles = torch.FloatTensor(np.linspace(0, rot_ang, n_angles).astype(np.float32))
-        radon = ParallelBeam(image_size, angles)   
-        sinogram = radon.forward(x)   
-        spec, fft_result = self.forward_row_fft(sinogram)
-        # print('spec shape', spec.shape)
-        return spec, sinogram
-        
-    def forward(self, batch):
-        # import pdb; pdb.set_trace()
-        pc = batch['pc']    # B,V,4 
-        im = batch['img']   # B,5,3,224,384 (B,S,C,H,W) S = number of cameras
-        
-        # -------- BEV Generation --------
         bev = self.encoder(pc)
-        B, C, H, W = bev.shape
-        # print(f'bev shape: {bev.shape}')
 
         if self.confidence:
             bev_confidence = self.confidence_layer(bev).sigmoid()
@@ -119,48 +90,26 @@ class RINGSharpL(nn.Module):
         else:
             bev_confidence = None
 
-        if self.coordinates == 'polar':
-            out_h = self.radius
-            out_w = self.theta
-            new_h = torch.linspace(0, 1, out_h).view(-1, 1).repeat(1, out_w)
-            new_w = torch.pi * torch.linspace(0, 2, out_w).repeat(out_h, 1)
-            grid_xy = torch.cat((new_h.unsqueeze(2), new_w.unsqueeze(2)), dim=2)
-            new_grid = grid_xy.clone()
-            new_grid[...,0] = grid_xy[...,0] * torch.cos(grid_xy[...,1])
-            new_grid[...,1] = grid_xy[...,0] * torch.sin(grid_xy[...,1])
-            new_grid = new_grid.unsqueeze(0).cuda().repeat(B,1,1,1)
-            polar_bev = F.grid_sample(bev, new_grid, align_corners=False)
-        else:
-            polar_bev = None
+        return {'bev': bev, 'confidence': bev_confidence}
+
+    def extract_bev_features(self, batch):
+        return self.extract_lidar_bev(batch)
+
+    def forward_bev_downstream(self, lidar_bev, bev_confidence=None, extra_outputs=None):
+        return run_ring_sharp_downstream(
+            self,
+            lidar_bev,
+            bev_confidence=bev_confidence,
+            yaw_module=self.encoder_yaw,
+            trans_module=None,
+            extra_outputs=extra_outputs,
+        )
         
-        # -------- Yaw BEV --------
-        if self.yaw_mode == 0:
-            # Apply conv layers before sinogram
-            bev_yaw = self.encoder_yaw(bev)
-            spec, sinogram = self.compute_spec(bev_yaw)
-        elif self.yaw_mode == 1:
-            # Apply conv layers after sinogram
-            _, sinogram = self.compute_spec(bev)
-            sinogram = self.encoder_yaw(sinogram)
-            spec, fft_result = self.forward_row_fft(sinogram) 
-        else:
-            raise ValueError('Wrong yaw mode!')
-        
-        # -------- Translation BEV --------
-        if self.trans_mode == 0:
-            bev_trans = None
-        elif self.trans_mode == 1:
-            bev_trans = bev
-        else:
-            raise ValueError('Wrong trans mode!')
-        
-        # -------- Global Descriptor  --------
-        # RT + FFT Aggregation
-        x = torch.sum(spec, dim=-2).reshape(B, -1)
-        if self.use_normalize:
-            x = F.normalize(x, dim=-1)
-        
-        return {'bev': bev, 'polar_bev': polar_bev, 'bev_trans': bev_trans, 'spec': spec, 'global': x, 'confidence': bev_confidence}
+    def forward(self, batch):
+        bev_outputs = self.extract_lidar_bev(batch)
+        bev = bev_outputs['bev']
+        bev_confidence = bev_outputs['confidence']
+        return self.forward_bev_downstream(bev, bev_confidence=bev_confidence)
     
     
     def print_info(self):

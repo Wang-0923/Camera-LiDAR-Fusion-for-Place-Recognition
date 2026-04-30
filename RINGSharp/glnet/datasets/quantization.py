@@ -10,6 +10,7 @@ import glnet.utils.vox_utils.improc as improc
 import glnet.utils.vox_utils.vox as vox
 import glnet.utils.vox_utils.geom as geom
 import glnet.utils.vox_utils.basic as basic
+from glnet.utils.common_utils import _ex
 
 
 class Quantizer(ABC):
@@ -83,7 +84,7 @@ class PolarQuantizer(Quantizer):
     def __init__(self, image_meta_path: str, quant_step: List[float]):
         assert len(quant_step) == 3, '3 quantization steps expected: for sector (in degrees), ring and z-coordinate (in meters)'
         self.quant_step = torch.tensor(quant_step, dtype=torch.float)
-        self.image_meta_path = os.path.expanduser(image_meta_path)
+        self.image_meta_path = _ex(image_meta_path)
         self.theta_range = int(360. // self.quant_step[0])
 
     def __call__(self, pc):

@@ -8,7 +8,7 @@ use_xyz = False
 normalize = True
 use_pretrained_model = True
 
-image_meta_path = ~/Data/NCLT/image_meta.pkl
+image_meta_path = Data/NCLT/image_meta.pkl
 
 output_dim = 4096
 feature_dim = 128

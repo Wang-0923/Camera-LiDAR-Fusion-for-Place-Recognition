@@ -176,7 +176,7 @@ def load_image(image_path, model=None, debayer=True):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate training tuples')
-    parser.add_argument('--dataset_root', type=str, default='~/Data/Oxford_radar')
+    parser.add_argument('--dataset_root', type=str, default='Data/Oxford_radar')
     args = parser.parse_args()
     
     dataset_root = _ex(args.dataset_root)

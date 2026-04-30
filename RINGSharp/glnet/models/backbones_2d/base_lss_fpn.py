@@ -550,14 +550,16 @@ class BaseLSSFPN(nn.Module):
             img_feat_with_depth = img_feat_with_depth.permute(0, 1, 3, 4, 5, 2)
             #print("img_feat_with_depth shape:", img_feat_with_depth.shape)
             #print("geom_xyz shape:", geom_xyz.shape)
-            feature_map = voxel_pooling_train(geom_xyz,
-                                              img_feat_with_depth.contiguous(),
-                                              self.voxel_num.cuda())
+            feature_map = voxel_pooling_train(
+                geom_xyz,
+                img_feat_with_depth.contiguous(),
+                self.voxel_num.to(geom_xyz.device),
+            )
         else:
             feature_map = voxel_pooling_inference(
                 geom_xyz, depth, depth_feature[:, self.depth_channels:(
                     self.depth_channels + self.output_channels)].contiguous(),
-                self.voxel_num.cuda())
+                self.voxel_num.to(geom_xyz.device))
         if is_return_depth:
             # final_depth has to be fp32, otherwise the depth
             # loss will colapse during the traing process.

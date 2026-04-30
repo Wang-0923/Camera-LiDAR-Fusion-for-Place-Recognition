@@ -14,7 +14,7 @@ confidence = False
 
 # image_encoder: res101, res50, effb0, effb4, superpoint, vovnet99
 # point_encoder: voxel, focal, unet
-image_meta_path = ~/Data/NCLT/image_meta.pkl
+image_meta_path = Data/NCLT/image_meta.pkl
 image_encoder = depth
 point_encoder = unet
 

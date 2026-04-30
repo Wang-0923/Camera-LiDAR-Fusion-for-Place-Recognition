@@ -47,6 +47,7 @@ from typing import List, Tuple
 import os
 import torch
 from torch import nn
+from glnet.utils.common_utils import _ex
 
 
 def MLP(channels: List[int], do_bn: bool = True) -> nn.Module:
@@ -224,7 +225,7 @@ class SuperGlue(nn.Module):
         assert self.config['weights'] in ['indoor', 'outdoor']
         path = Path(__file__).parent
         # path = path / 'weights/superglue_{}.pth'.format(self.config['weights'])
-        path = os.path.expanduser(f"~/Data/weights/superglue_{self.config['weights']}.pth")
+        path = _ex(f'Data/weights/superglue_{self.config["weights"]}.pth')
         self.load_state_dict(torch.load(str(path)))
         print('Loaded SuperGlue model (\"{}\" weights)'.format(
             self.config['weights']))

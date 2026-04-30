@@ -12,7 +12,7 @@ coordinates = polar
 
 # image_encoder: res101, res50, effb0, effb4
 # point_encoder: voxel, focal, unet
-image_meta_path = ~/Data/Oxford_radar/image_meta.pkl
+image_meta_path = Data/Oxford_radar/image_meta.pkl
 image_encoder = res50
 point_encoder = unet
 
