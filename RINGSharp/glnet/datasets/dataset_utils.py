@@ -51,16 +51,6 @@ def make_collate_fn(dataset: TrainingDataset, params: TrainingParams):
         elif params.model_params.use_bev:
             bevs = [e[5] for e in data_list]
             bevs = torch.stack(bevs)
-            lidar_rels = None
-            lidar_rel_slots = [len(e) > 6 for e in data_list]
-            if any(lidar_rel_slots) and not all(lidar_rel_slots):
-                raise ValueError('Mixed LiDAR reliability cache availability within a batch')
-            if all(lidar_rel_slots):
-                lidar_rel_items = [e[6] for e in data_list]
-                if all(item is not None for item in lidar_rel_items):
-                    lidar_rels = torch.stack(lidar_rel_items)
-                elif any(item is not None for item in lidar_rel_items):
-                    raise ValueError('Mixed LiDAR reliability cache availability within a batch')
             depth_maps = None
         elif params.model_params.use_range_image:
             depths = [e[5] for e in data_list]
@@ -119,8 +109,6 @@ def make_collate_fn(dataset: TrainingDataset, params: TrainingParams):
 
         if params.model_params.use_bev:
             batch = {'orig_pc': clouds, 'pc': bevs, 'img': images}
-            if 'lidar_rels' in locals() and lidar_rels is not None:
-                batch['lidar_reliability_bev'] = lidar_rels
         elif params.model_params.use_range_image:
             batch = {'orig_pc': clouds, 'depth': depths, 'img': images}
         else:

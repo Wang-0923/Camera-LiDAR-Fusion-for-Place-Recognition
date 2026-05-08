@@ -181,13 +181,7 @@ class RINGSharpVL(nn.Module):
                 dataset_type=model_params.dataset_type,
                 rho=model_params.adaptive_fusion_rho,
                 temperature=model_params.adaptive_fusion_temperature,
-                use_visual_reliability=model_params.adaptive_visual_reliability,
-                use_lidar_reliability=model_params.adaptive_lidar_reliability,
                 eps=model_params.adaptive_eps,
-                lidar_reliability_mode=model_params.adaptive_lidar_reliability_mode,
-                lidar_downsample_voxel_size=model_params.adaptive_lidar_reliability_downsample,
-                lidar_knn=model_params.adaptive_lidar_reliability_k,
-                lidar_min_neighbors=model_params.adaptive_lidar_reliability_min_neighbors,
             )
             if self.adaptive_fusion_enabled
             else None
@@ -220,12 +214,7 @@ class RINGSharpVL(nn.Module):
         return self.lidar_branch.extract_lidar_bev(batch)
 
     def extract_fused_bev(self, batch):
-        return_visual_reliability = (
-            self.adaptive_fusion_enabled
-            and self.adaptive_reliability_estimator is not None
-            and self.adaptive_reliability_estimator.use_visual_reliability
-        )
-        visual_outputs = self.extract_vision_bev(batch, return_reliability=return_visual_reliability)
+        visual_outputs = self.extract_vision_bev(batch, return_reliability=self.adaptive_fusion_enabled)
         lidar_outputs = self.extract_lidar_bev(batch)
         bev_meta = batch.get('bev_meta')
         adaptive = None

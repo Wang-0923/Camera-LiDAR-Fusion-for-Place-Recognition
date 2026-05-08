@@ -125,9 +125,11 @@ python glnet/datasets/nclt/image_preprocess.py \
 3. 生成训练/验证 tuples
 python glnet/datasets/nclt/generate_training_tuples.py \
   --dataset_root /root/autodl-tmp/Data/NCLT
+  --bev
 
 python glnet/datasets/nclt/generate_evaluation_sets.py \
   --dataset_root /root/autodl-tmp/Data/NCLT
+  --bev
 ```
 
 #### *训练

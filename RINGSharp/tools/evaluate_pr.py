@@ -74,7 +74,6 @@ class PREvaluator(Evaluator):
 
         orig_pc = np.asarray(orig_pc)
         pc = None
-        lidar_reliability_bev = None
         if self.params.use_bev:
             bev_folder = os.path.dirname(bev_path)
             os.makedirs(bev_folder, exist_ok=True)
@@ -84,29 +83,6 @@ class PREvaluator(Evaluator):
                 bev = generate_bev(orig_pc, Z=self.Z, Y=self.Y, X=self.X, bounds=self.bounds)
                 np.save(bev_path, bev.detach().cpu().numpy())
             pc = bev.unsqueeze(0).to(self.device)
-
-            need_lidar_rel_cache = (
-                self.params.adaptive_fusion
-                and self.params.adaptive_lidar_reliability
-                and self.params.adaptive_lidar_reliability_mode in ['offline', 'auto']
-            )
-            if need_lidar_rel_cache:
-                lidar_rel_path = bev_path.replace('bev', 'lidar_reliability_bev')
-                if os.path.isfile(lidar_rel_path):
-                    lidar_reliability_bev = to_torch(np.load(lidar_rel_path)).float()
-                    if lidar_reliability_bev.ndim == 2:
-                        lidar_reliability_bev = lidar_reliability_bev.unsqueeze(0)
-                    if lidar_reliability_bev.ndim != 3 or lidar_reliability_bev.shape[0] != 1:
-                        raise ValueError(
-                            f'LiDAR reliability cache must have shape [1,H,W] or [H,W], got '
-                            f'{tuple(lidar_reliability_bev.shape)} at {lidar_rel_path}'
-                        )
-                    lidar_reliability_bev = lidar_reliability_bev.unsqueeze(0).to(self.device)
-                elif self.params.adaptive_lidar_reliability_mode == 'offline':
-                    raise FileNotFoundError(
-                        f'Missing LiDAR reliability cache: {lidar_rel_path}. '
-                        'Run generate_training_tuples.py / generate_evaluation_sets.py with --lidar_reliability.'
-                    )
 
         imgs = None
         if self.params.use_rgb:
@@ -121,8 +97,6 @@ class PREvaluator(Evaluator):
             imgs = imgs.to(self.device)
 
         batch = {'pc': pc, 'img': imgs, 'orig_pc': orig_pc}
-        if lidar_reliability_bev is not None:
-            batch['lidar_reliability_bev'] = lidar_reliability_bev
         if self.params.enable_bev_fusion:
             batch['bev_meta'] = [
                 build_bev_alignment_meta(
