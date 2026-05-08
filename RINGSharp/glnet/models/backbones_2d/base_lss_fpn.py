@@ -478,11 +478,77 @@ class BaseLSSFPN(nn.Module):
     def _forward_depth_net(self, feat, mats_dict):
         return self.depth_net(feat, mats_dict)
 
+    def project_image_reliability_to_bev(self, depth, geom_xyz, image_reliability, img_height, img_width, eps=1e-6):
+        """Lift-splat image reliability with precomputed LSS depth/geometry.
+
+        Args:
+            depth: depth probability with shape [B*num_cams, D, fH, fW].
+            geom_xyz: voxel indices with shape [B, num_cams, D, fH, fW, 3].
+            image_reliability: tensor with shape [B, num_cams, 1, H, W] or
+                [B, 1, num_cams, 1, H, W].
+            img_height: image-space reliability height.
+            img_width: image-space reliability width.
+
+        Returns:
+            Tensor with shape [B, 1, H_bev, W_bev].
+        """
+        if image_reliability.ndim == 6:
+            image_reliability = image_reliability[:, 0]
+        if image_reliability.ndim != 5:
+            raise ValueError(
+                'image_reliability must have shape [B,num_cams,1,H,W] or '
+                f'[B,1,num_cams,1,H,W], got {tuple(image_reliability.shape)}'
+            )
+
+        batch_size, num_cams = geom_xyz.shape[:2]
+        if image_reliability.shape[:3] != (batch_size, num_cams, 1):
+            raise ValueError(
+                f'image_reliability shape {tuple(image_reliability.shape)} does not match '
+                f'images batch/cameras {(batch_size, num_cams)}'
+            )
+        _, _, feat_h, feat_w = depth.shape
+
+        reliability_feat = image_reliability.reshape(batch_size * num_cams, 1, img_height, img_width)
+        reliability_feat = F.interpolate(
+            reliability_feat,
+            size=(feat_h, feat_w),
+            mode='bilinear',
+            align_corners=False,
+        ).to(dtype=depth.dtype)
+
+        numerator = self._pool_single_channel_with_depth(depth, geom_xyz, reliability_feat)
+        denominator_feat = torch.ones_like(reliability_feat)
+        denominator = self._pool_single_channel_with_depth(depth, geom_xyz, denominator_feat)
+        reliability_bev = numerator / (denominator + eps)
+        if reliability_bev.ndim != 4:
+            raise ValueError(f'Expected projected reliability [B,1,H,W], got {tuple(reliability_bev.shape)}')
+        return reliability_bev.contiguous().clamp(0.0, 1.0)
+
+    def _pool_single_channel_with_depth(self, depth, geom_xyz, feature):
+        batch_size, num_cams = geom_xyz.shape[:2]
+        feature_with_depth = depth.unsqueeze(1) * feature.unsqueeze(2)
+        feature_with_depth = feature_with_depth.reshape(
+            batch_size,
+            num_cams,
+            feature_with_depth.shape[1],
+            feature_with_depth.shape[2],
+            feature_with_depth.shape[3],
+            feature_with_depth.shape[4],
+        )
+        feature_with_depth = feature_with_depth.permute(0, 1, 3, 4, 5, 2)
+        return voxel_pooling_train(
+            geom_xyz,
+            feature_with_depth.contiguous(),
+            self.voxel_num.to(geom_xyz.device),
+        )
+
     def _forward_single_sweep(self,
                               sweep_index,
                               sweep_imgs,
                               mats_dict,
-                              is_return_depth=False):
+                              is_return_depth=False,
+                              image_reliability=None,
+                              is_return_reliability=False):
         """Forward function for single sweep.
 
         Args:
@@ -560,18 +626,33 @@ class BaseLSSFPN(nn.Module):
                 geom_xyz, depth, depth_feature[:, self.depth_channels:(
                     self.depth_channels + self.output_channels)].contiguous(),
                 self.voxel_num.to(geom_xyz.device))
+        returns = [feature_map.contiguous()]
         if is_return_depth:
             # final_depth has to be fp32, otherwise the depth
             # loss will colapse during the traing process.
-            return feature_map.contiguous(
-            ), depth_feature[:, :self.depth_channels].softmax(dim=1)
-        return feature_map.contiguous()
+            returns.append(depth)
+        if is_return_reliability:
+            if image_reliability is None:
+                raise ValueError('image_reliability is required when is_return_reliability=True')
+            reliability_bev = self.project_image_reliability_to_bev(
+                depth,
+                geom_xyz,
+                image_reliability,
+                img_height,
+                img_width,
+            )
+            returns.append(reliability_bev)
+        if len(returns) == 1:
+            return returns[0]
+        return tuple(returns)
 
     def forward(self,
                 sweep_imgs,
                 mats_dict,
                 timestamps=None,
-                is_return_depth=False):
+                is_return_depth=False,
+                image_reliability=None,
+                is_return_reliability=False):
         """Forward function.
 
         Args:
@@ -603,12 +684,14 @@ class BaseLSSFPN(nn.Module):
             0,
             sweep_imgs[:, 0:1, ...],
             mats_dict,
-            is_return_depth=is_return_depth)
+            is_return_depth=is_return_depth,
+            image_reliability=image_reliability,
+            is_return_reliability=is_return_reliability)
         if num_sweeps == 1:
             return key_frame_res
 
         key_frame_feature = key_frame_res[
-            0] if is_return_depth else key_frame_res
+            0] if (is_return_depth or is_return_reliability) else key_frame_res
 
         ret_feature_list = [key_frame_feature]
         for sweep_index in range(1, num_sweeps):
@@ -620,7 +703,12 @@ class BaseLSSFPN(nn.Module):
                     is_return_depth=False)
                 ret_feature_list.append(feature_map)
 
+        output = [torch.cat(ret_feature_list, 1)]
         if is_return_depth:
-            return torch.cat(ret_feature_list, 1), key_frame_res[1]
-        else:
-            return torch.cat(ret_feature_list, 1)
+            output.append(key_frame_res[1])
+        if is_return_reliability:
+            reliability_index = 2 if is_return_depth else 1
+            output.append(key_frame_res[reliability_index])
+        if len(output) == 1:
+            return output[0]
+        return tuple(output)

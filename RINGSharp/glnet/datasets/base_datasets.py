@@ -126,6 +126,8 @@ class TrainingDataset(Dataset):
         query_pc = query_pc[:, :3]
         query_depth_path = query_bev_path.replace('bev', 'depth')
         query_range_image_path = query_bev_path.replace('bev', 'range_image')                   
+        query_lidar_rel_path = query_bev_path.replace('bev', 'lidar_reliability_bev')
+        query_lidar_rel = None
         if self.params.model_params.use_depth:
             depth_folder = query_depth_path.strip(query_depth_path.split('/')[-1])
             os.makedirs(depth_folder, exist_ok=True)
@@ -200,6 +202,38 @@ class TrainingDataset(Dataset):
                 query_bev = to_torch(query_bev)
             else:
                 query_bev = generate_bev(query_pc, Z=self.Z, Y=self.Y, X=self.X, bounds=self.bounds) # tensor output
+
+            need_lidar_rel_cache = (
+                self.params is not None
+                and self.params.model_params.adaptive_fusion
+                and self.params.model_params.adaptive_lidar_reliability
+                and self.params.model_params.adaptive_lidar_reliability_mode in ['offline', 'auto']
+                and self.params.model_params.use_bev
+            )
+            if need_lidar_rel_cache:
+                rel_mode = self.params.model_params.adaptive_lidar_reliability_mode
+                if self.params.model_params.xyz_aug:
+                    if rel_mode == 'offline':
+                        raise ValueError(
+                            'adaptive_lidar_reliability_mode=offline is incompatible with xyz_aug=True, '
+                            'because cached LiDAR reliability no longer matches the augmented point cloud.'
+                        )
+                    query_lidar_rel = None
+                elif os.path.isfile(query_lidar_rel_path):
+                    query_lidar_rel = np.load(query_lidar_rel_path)
+                    query_lidar_rel = to_torch(query_lidar_rel).float()
+                    if query_lidar_rel.ndim == 2:
+                        query_lidar_rel = query_lidar_rel.unsqueeze(0)
+                    if query_lidar_rel.ndim != 3 or query_lidar_rel.shape[0] != 1:
+                        raise ValueError(
+                            f'LiDAR reliability cache must have shape [1,H,W] or [H,W], got '
+                            f'{tuple(query_lidar_rel.shape)} at {query_lidar_rel_path}'
+                        )
+                elif rel_mode == 'offline':
+                    raise FileNotFoundError(
+                        f'Missing LiDAR reliability cache: {query_lidar_rel_path}. '
+                        'Run generate_training_tuples.py / generate_evaluation_sets.py with --lidar_reliability.'
+                    )
         elif self.params.model_params.use_range_image:
             range_image_folder = query_range_image_path.strip(query_range_image_path.split('/')[-1])
             os.makedirs(range_image_folder, exist_ok=True)
@@ -233,6 +267,8 @@ class TrainingDataset(Dataset):
                 return query_pc, query_pc_tensor, query_imgs, ndx, pose, depth_maps
 
         if self.params.model_params.use_bev:
+            if query_lidar_rel is not None:
+                return query_pc, query_pc_tensor, query_imgs, ndx, pose, query_bev, query_lidar_rel
             return query_pc, query_pc_tensor, query_imgs, ndx, pose, query_bev
         elif self.params.model_params.use_range_image:
             return  query_pc, query_pc_tensor, query_imgs, ndx, pose, query_depth
@@ -328,4 +364,3 @@ def get_pointcloud_with_image_loader(dataset_type) -> PointCloudWithImageLoader:
         return OxfordPointCloudWithImageLoader()
     else:
         raise NotImplementedError(f"Unsupported dataset type: {dataset_type}")
-

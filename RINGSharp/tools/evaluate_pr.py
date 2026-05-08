@@ -24,8 +24,16 @@ from glnet.utils.data_utils.point_clouds import generate_bev
 from glnet.utils.params import ModelParams
 try:
     from tools.evaluator import Evaluator
+    from tools.plot_PR_curve import compute_AUC, compute_PR_pairs
 except ModuleNotFoundError:
     from evaluator import Evaluator
+    from plot_PR_curve import compute_AUC, compute_PR_pairs
+
+
+def _format_revisit_threshold(revisit_threshold: float) -> str:
+    if float(revisit_threshold).is_integer():
+        return str(int(revisit_threshold))
+    return str(revisit_threshold)
 
 
 class PREvaluator(Evaluator):
@@ -66,6 +74,7 @@ class PREvaluator(Evaluator):
 
         orig_pc = np.asarray(orig_pc)
         pc = None
+        lidar_reliability_bev = None
         if self.params.use_bev:
             bev_folder = os.path.dirname(bev_path)
             os.makedirs(bev_folder, exist_ok=True)
@@ -75,6 +84,29 @@ class PREvaluator(Evaluator):
                 bev = generate_bev(orig_pc, Z=self.Z, Y=self.Y, X=self.X, bounds=self.bounds)
                 np.save(bev_path, bev.detach().cpu().numpy())
             pc = bev.unsqueeze(0).to(self.device)
+
+            need_lidar_rel_cache = (
+                self.params.adaptive_fusion
+                and self.params.adaptive_lidar_reliability
+                and self.params.adaptive_lidar_reliability_mode in ['offline', 'auto']
+            )
+            if need_lidar_rel_cache:
+                lidar_rel_path = bev_path.replace('bev', 'lidar_reliability_bev')
+                if os.path.isfile(lidar_rel_path):
+                    lidar_reliability_bev = to_torch(np.load(lidar_rel_path)).float()
+                    if lidar_reliability_bev.ndim == 2:
+                        lidar_reliability_bev = lidar_reliability_bev.unsqueeze(0)
+                    if lidar_reliability_bev.ndim != 3 or lidar_reliability_bev.shape[0] != 1:
+                        raise ValueError(
+                            f'LiDAR reliability cache must have shape [1,H,W] or [H,W], got '
+                            f'{tuple(lidar_reliability_bev.shape)} at {lidar_rel_path}'
+                        )
+                    lidar_reliability_bev = lidar_reliability_bev.unsqueeze(0).to(self.device)
+                elif self.params.adaptive_lidar_reliability_mode == 'offline':
+                    raise FileNotFoundError(
+                        f'Missing LiDAR reliability cache: {lidar_rel_path}. '
+                        'Run generate_training_tuples.py / generate_evaluation_sets.py with --lidar_reliability.'
+                    )
 
         imgs = None
         if self.params.use_rgb:
@@ -89,6 +121,8 @@ class PREvaluator(Evaluator):
             imgs = imgs.to(self.device)
 
         batch = {'pc': pc, 'img': imgs, 'orig_pc': orig_pc}
+        if lidar_reliability_bev is not None:
+            batch['lidar_reliability_bev'] = lidar_reliability_bev
         if self.params.enable_bev_fusion:
             batch['bev_meta'] = [
                 build_bev_alignment_meta(
@@ -170,6 +204,13 @@ class PREvaluator(Evaluator):
         np.save(os.path.join(folder_path, 'map_embeddings.npy'), map_embeddings)
         np.save(os.path.join(folder_path, 'query_embeddings.npy'), query_embeddings)
 
+        pr_thresholds = np.linspace(0, 1, 100)
+        pr_pair_dists = pair_dists[query_indexes]
+        pr_query_positions = query_positions[query_indexes]
+        precisions_pr_curve = np.zeros((len(self.radius), len(pr_thresholds)), dtype=np.float64)
+        recalls_pr_curve = np.zeros((len(self.radius), len(pr_thresholds)), dtype=np.float64)
+        f1s_pr_curve = np.zeros((len(self.radius), len(pr_thresholds)), dtype=np.float64)
+
         metrics = {
             'exp_name': exp_name,
             'dataset_type': self.params.dataset_type,
@@ -180,20 +221,49 @@ class PREvaluator(Evaluator):
             'radius': self.radius,
         }
 
-        for revisit_threshold in self.radius:
+        for radius_ndx, revisit_threshold in enumerate(self.radius):
             denom = max(positives[revisit_threshold], 1)
             recall_curve = recalls[revisit_threshold] / denom
+            threshold_label = _format_revisit_threshold(revisit_threshold)
+            pr_curve_path = os.path.join(folder_path, f'precision_recall_curve_{threshold_label}m.pdf')
+            precisions, pr_recalls, f1s = compute_PR_pairs(
+                pr_pair_dists,
+                pr_query_positions,
+                map_positions,
+                thresholds=pr_thresholds,
+                save_path=pr_curve_path,
+                revisit_threshold=revisit_threshold,
+            )
+            precisions_pr_curve[radius_ndx] = precisions
+            recalls_pr_curve[radius_ndx] = pr_recalls
+            f1s_pr_curve[radius_ndx] = f1s
+            max_f1_ndx = int(np.argmax(f1s))
+            max_f1 = float(f1s[max_f1_ndx])
+            max_f1_threshold = float(pr_thresholds[max_f1_ndx])
+            auc = float(compute_AUC(precisions, pr_recalls))
+
             metrics[f'{revisit_threshold}m'] = {
                 'num_positives': positives[revisit_threshold],
                 'recall_pr': recall_curve,
                 'recall_at_1': recall_curve[0] if max_k >= 1 else 0.0,
                 'recall_at_5': recall_curve[4] if max_k >= 5 else recall_curve[-1],
                 'recall_at_10': recall_curve[9] if max_k >= 10 else recall_curve[-1],
+                'precision_recall_curve_path': pr_curve_path,
+                'max_f1': max_f1,
+                'max_f1_descriptor_threshold': max_f1_threshold,
+                'auc': auc,
             }
             print(f'-------- Revisit threshold: {revisit_threshold} m --------')
             print(f"Recall@1: {metrics[f'{revisit_threshold}m']['recall_at_1']}")
             print(f"Recall@5: {metrics[f'{revisit_threshold}m']['recall_at_5']}")
             print(f"Recall@10: {metrics[f'{revisit_threshold}m']['recall_at_10']}")
+            print(f'Max F1: {max_f1} at descriptor threshold {max_f1_threshold}')
+            print(f'PR AUC: {auc}')
+
+        np.save(os.path.join(folder_path, 'pr_curve_thresholds.npy'), pr_thresholds)
+        np.save(os.path.join(folder_path, 'precisions.npy'), precisions_pr_curve)
+        np.save(os.path.join(folder_path, 'recalls.npy'), recalls_pr_curve)
+        np.save(os.path.join(folder_path, 'f1s.npy'), f1s_pr_curve)
 
         return metrics
 
@@ -219,7 +289,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval_set', type=str, default='test_2012-02-04_2012-03-17_20.0_5.0.pickle')
     parser.add_argument('--model_config', type=str, required=True)
     parser.add_argument('--weight', type=str, default=None)
-    parser.add_argument('--revisit_threshold', type=float, default=10.0)
+    parser.add_argument('--revisit_threshold', type=float, default=5.0)
     parser.add_argument('--n_samples', type=int, default=None)
     args = parser.parse_args()
 

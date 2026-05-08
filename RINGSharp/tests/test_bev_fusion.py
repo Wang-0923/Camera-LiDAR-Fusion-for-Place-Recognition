@@ -15,6 +15,7 @@ from glnet.models.bev_fusion import (  # noqa: E402
     build_bev_reference_points,
     validate_bev_alignment,
 )
+from glnet.models.adaptive_fusion import AdaptiveReliabilityEstimator  # noqa: E402
 
 
 def _meta(**overrides):
@@ -154,3 +155,47 @@ def test_fusion_workflow_uses_both_modalities_before_downstream():
     assert model.downstream_input_shape == (1, 128, 32, 32)
     assert output['bev'].shape == (1, 128, 32, 32)
     assert output['spec'].shape == (1, 1, 32, 32)
+
+
+@torch.no_grad()
+def test_adaptive_reliability_maps_and_gates():
+    visual_bev = torch.randn(2, 80, 16, 16)
+    lidar_bev = torch.randn(2, 128, 16, 16)
+    batch = {
+        'pc': torch.ones(2, 20, 16, 16),
+        'orig_pc': [torch.randn(128, 3), torch.randn(128, 3)],
+    }
+    visual_outputs = {'visual_reliability_bev': torch.rand(2, 1, 16, 16)}
+    estimator = AdaptiveReliabilityEstimator(dataset_type='nclt', rho=0.5, temperature=0.7)
+
+    adaptive = estimator(batch, visual_bev, lidar_bev, visual_outputs=visual_outputs)
+
+    assert set(['Mv', 'Ml', 'Wv', 'Wl', 'Gv', 'Gl']).issubset(adaptive.keys())
+    for key in ['Mv', 'Ml', 'Wv', 'Wl', 'Gv', 'Gl']:
+        assert adaptive[key].shape == (2, 1, 16, 16)
+    assert torch.allclose((adaptive['Wv'] + adaptive['Wl']).mean(), torch.tensor(1.0), atol=1e-5)
+    assert adaptive['Gv'].min() >= 0.5 - 1e-5
+    assert adaptive['Gv'].max() <= 1.5 + 1e-5
+    assert adaptive['Gl'].min() >= 0.5 - 1e-5
+    assert adaptive['Gl'].max() <= 1.5 + 1e-5
+
+
+@torch.no_grad()
+def test_adaptive_rho_zero_gates_are_identity_and_fusion_shape():
+    visual_bev = torch.randn(2, 80, 16, 16)
+    lidar_bev = torch.randn(2, 128, 16, 16)
+    batch = {
+        'pc': torch.ones(2, 20, 16, 16),
+        'orig_pc': [torch.randn(128, 3), torch.randn(128, 3)],
+    }
+    visual_outputs = {'visual_reliability_bev': torch.rand(2, 1, 16, 16)}
+    estimator = AdaptiveReliabilityEstimator(dataset_type='nclt', rho=0.0, temperature=0.7)
+    adaptive = estimator(batch, visual_bev, lidar_bev, visual_outputs=visual_outputs)
+
+    assert torch.allclose(adaptive['Gv'], torch.ones_like(adaptive['Gv']), atol=1e-6)
+    assert torch.allclose(adaptive['Gl'], torch.ones_like(adaptive['Gl']), atol=1e-6)
+
+    module = BEVDeformableFusion(embed_dim=32, out_channels=32, num_heads=4, num_points=2).eval()
+    output = module(visual_bev, lidar_bev, adaptive=adaptive, strict_meta=False, return_intermediates=False)
+    assert output['fused_bev'].shape == (2, 32, 16, 16)
+    assert set(['Mv', 'Ml', 'Wv', 'Wl', 'Gv', 'Gl']).issubset(output['adaptive'].keys())

@@ -69,6 +69,19 @@ class RINGSharpV(nn.Module):
             backbone_conf['img_backbone_conf'].pop('init_cfg', None)
 
         self.encoder = BaseLSSFPN(**backbone_conf)
+        sobel_x = torch.tensor(
+            [[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]],
+            dtype=torch.float32,
+        ).view(1, 1, 3, 3) / 8.0
+        sobel_y = torch.tensor(
+            [[-1.0, -2.0, -1.0], [0.0, 0.0, 0.0], [1.0, 2.0, 1.0]],
+            dtype=torch.float32,
+        ).view(1, 1, 3, 3) / 8.0
+        self.register_buffer('visual_reliability_sobel_x', sobel_x, persistent=False)
+        self.register_buffer('visual_reliability_sobel_y', sobel_y, persistent=False)
+        self.visual_reliability_tau = 0.01
+        self.visual_reliability_eps = 1e-6
+        self.visual_reliability_window = 5
         
         if self.confidence:
             self.confidence_layer = AdaptationBlock(self.visual_feature_dim, 1)
@@ -133,7 +146,26 @@ class RINGSharpV(nn.Module):
             'bda_mat': bda_mat,
         }
 
-    def extract_vision_bev(self, batch):
+    def _compute_image_reliability(self, image):
+        b, n, c, _, _ = image.shape
+        image = image.reshape(b * n, c, image.shape[-2], image.shape[-1]).float()
+        gray = 0.2989 * image[:, 0:1] + 0.5870 * image[:, 1:2] + 0.1140 * image[:, 2:3]
+        sobel_x = self.visual_reliability_sobel_x.to(device=gray.device, dtype=gray.dtype)
+        sobel_y = self.visual_reliability_sobel_y.to(device=gray.device, dtype=gray.dtype)
+        ix = F.conv2d(gray, sobel_x, padding=1)
+        iy = F.conv2d(gray, sobel_y, padding=1)
+        k = self.visual_reliability_window
+        pad = k // 2
+        a = F.avg_pool2d(ix * ix, kernel_size=k, stride=1, padding=pad)
+        c_mat = F.avg_pool2d(iy * iy, kernel_size=k, stride=1, padding=pad)
+        b_mat = F.avg_pool2d(ix * iy, kernel_size=k, stride=1, padding=pad)
+        delta = torch.sqrt((a - c_mat).pow(2) + 4.0 * b_mat.pow(2) + self.visual_reliability_eps)
+        lambda_min = 0.5 * (a + c_mat - delta)
+        lambda_min = lambda_min.clamp_min(0.0)
+        reliability = lambda_min / (lambda_min + self.visual_reliability_tau + self.visual_reliability_eps)
+        return reliability.reshape(b, n, 1, reliability.shape[-2], reliability.shape[-1]).clamp(0.0, 1.0)
+
+    def extract_vision_bev(self, batch, return_reliability=False):
         im = batch['img']
         if im.ndim != 5:
             raise ValueError(f'Expected batch[\"img\"] with shape (B, S, C, H, W), got {tuple(im.shape)}')
@@ -146,12 +178,23 @@ class RINGSharpV(nn.Module):
         mats_dict = self._build_mats_dict(image_meta, batch_size, num_views, im.device)
         x = im.unsqueeze(1).float()
 
-        bev, depth_pred = self.encoder(
-            x,
-            mats_dict,
-            timestamps=None,
-            is_return_depth=True,
-        )
+        if return_reliability:
+            image_reliability = self._compute_image_reliability(im)
+            bev, depth_pred, visual_reliability_bev = self.encoder(
+                x,
+                mats_dict,
+                timestamps=None,
+                is_return_depth=True,
+                image_reliability=image_reliability,
+                is_return_reliability=True,
+            )
+        else:
+            bev, depth_pred = self.encoder(
+                x,
+                mats_dict,
+                timestamps=None,
+                is_return_depth=True,
+            )
 
         if self.confidence:
             bev_confidence = self.confidence_layer(bev).sigmoid()
@@ -159,7 +202,15 @@ class RINGSharpV(nn.Module):
         else:
             bev_confidence = None
 
-        return {'bev': bev, 'depth': depth_pred, 'confidence': bev_confidence}
+        output = {'bev': bev, 'depth': depth_pred, 'confidence': bev_confidence}
+        if return_reliability:
+            if visual_reliability_bev.shape[-2:] != bev.shape[-2:]:
+                raise ValueError(
+                    'Projected visual reliability BEV shape does not match visual BEV: '
+                    f'{tuple(visual_reliability_bev.shape)} vs {tuple(bev.shape)}'
+                )
+            output['visual_reliability_bev'] = visual_reliability_bev.to(device=bev.device, dtype=bev.dtype)
+        return output
 
     def extract_bev_features(self, batch):
         return self.extract_vision_bev(batch)

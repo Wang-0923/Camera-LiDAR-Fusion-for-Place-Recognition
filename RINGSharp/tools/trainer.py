@@ -178,7 +178,7 @@ def do_train(params: TrainingParams, exp_name, resume=False, debug=False, weight
     radius = [2, 5, 10, 20, 25]
 
     if is_ring_sharp and is_pr_only:
-        evaluator_test_set = GLEvaluator(params.dataset_folder, params.dataset, params.test_file, device=device, params=params.model_params, radius=[10.0], k=10, n_samples=None)
+        evaluator_test_set = GLEvaluator(params.dataset_folder, params.dataset, params.test_file, device=device, params=params.model_params, radius=[5.0], k=10, n_samples=None)
     else:
         evaluator_test_set = GLEvaluator(params.dataset_folder, params.dataset, params.test_file, device=device, params=params.model_params, radius=radius, k=20, n_samples=None)
 

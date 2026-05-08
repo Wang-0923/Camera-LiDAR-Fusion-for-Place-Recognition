@@ -40,6 +40,12 @@ def make_losses(params: ModelParams):
         pr_loss_fn = BatchHardTripletLossWithMasks(params.margin)
     elif params.loss == 'BatchHardContrastiveLoss':
         pr_loss_fn = BatchHardContrastiveLossWithMasks(params.pos_margin, params.neg_margin)
+    elif params.loss == 'TruncatedSmoothAP':
+        pr_loss_fn = TruncatedSmoothAPLossWithMasks(
+            tau1=params.truncated_smoothap_tau1,
+            similarity=params.truncated_smoothap_similarity,
+            positives_per_query=params.truncated_smoothap_positives_per_query,
+        )
     elif params.loss == 'PRLoss':
         pr_loss_fn = PRLoss(params)
     else:
@@ -626,6 +632,114 @@ class BatchHardContrastiveLossWithMasks:
                  }
 
         return loss, stats, hard_triplets
+
+
+def _smooth_ap_sigmoid(x, temp=0.01):
+    exponent = -x / temp
+    exponent = torch.clamp(exponent, min=-50, max=50)
+    return 1.0 / (1.0 + torch.exp(exponent))
+
+
+def _compute_descriptor_affinity(embeddings, similarity='cosine'):
+    if similarity == 'cosine':
+        return embeddings @ embeddings.t()
+    if similarity == 'euclidean':
+        embeddings = embeddings.unsqueeze(0)
+        distances = torch.cdist(embeddings, embeddings, p=2).squeeze(0)
+        return -distances
+    raise NotImplementedError(f'Incorrect similarity measure: {similarity}')
+
+
+class TruncatedSmoothAPLossWithMasks:
+    """Truncated SmoothAP loss for global descriptor retrieval.
+
+    Implemented following RangePlace's TruncatedSmoothAP interface, adapted to
+    RINGSharp's positives_mask / negatives_mask and trainer return convention.
+    """
+
+    def __init__(self, tau1=0.01, similarity='cosine', positives_per_query=4):
+        self.tau1 = tau1
+        self.similarity = similarity
+        self.positives_per_query = positives_per_query
+
+    def __call__(self, embeddings, positives_mask, negatives_mask):
+        if embeddings.dim() != 2:
+            raise ValueError(f'Expected embeddings with shape [B,D], got {tuple(embeddings.shape)}')
+
+        device = embeddings.device
+        positives_mask = positives_mask.to(device=device, dtype=torch.bool)
+        negatives_mask = negatives_mask.to(device=device, dtype=torch.bool)
+
+        batch_size = embeddings.shape[0]
+        k = min(self.positives_per_query, batch_size)
+        if k < 1:
+            zero = embeddings.sum() * 0.0
+            stats = {
+                'pr_loss': 0.0,
+                'ap': 0.0,
+                'positives_per_query': 0.0,
+                'best_positive_ranking': 0.0,
+                'recall_at_1': 0.0,
+                'avg_embedding_norm': embeddings.norm(dim=1).mean().item(),
+            }
+            return zero, stats, None
+
+        s_qz = _compute_descriptor_affinity(embeddings, similarity=self.similarity)
+
+        s_positives = s_qz.detach().clone()
+        s_positives.masked_fill_(~positives_mask, -torch.inf)
+        closest_positives_ndx = torch.topk(s_positives, k=k, dim=1, largest=True, sorted=True)[1]
+        valid_positives_mask = torch.gather(positives_mask, 1, closest_positives_ndx)
+        n_valid_positives = valid_positives_mask.sum(dim=1)
+        valid_q_mask = n_valid_positives > 0
+
+        if not torch.any(valid_q_mask):
+            zero = embeddings.sum() * 0.0
+            stats = {
+                'pr_loss': 0.0,
+                'ap': 0.0,
+                'positives_per_query': 0.0,
+                'best_positive_ranking': 0.0,
+                'recall_at_1': 0.0,
+                'avg_embedding_norm': embeddings.norm(dim=1).mean().item(),
+            }
+            return zero, stats, None
+
+        positive_scores = s_qz.gather(1, closest_positives_ndx)
+        s_diff = s_qz.unsqueeze(1) - positive_scores.unsqueeze(2)
+        s_sigmoid = _smooth_ap_sigmoid(s_diff, temp=self.tau1)
+
+        pos_s_sigmoid = s_sigmoid * positives_mask.unsqueeze(1)
+        same_positive_mask = torch.ones_like(pos_s_sigmoid)
+        same_positive_mask.scatter_(2, closest_positives_ndx.unsqueeze(2), 0.0)
+        pos_s_sigmoid = pos_s_sigmoid * same_positive_mask
+
+        r_p = pos_s_sigmoid.sum(dim=2) + 1.0
+        neg_s_sigmoid = s_sigmoid * negatives_mask.unsqueeze(1)
+        r_omega = r_p + neg_s_sigmoid.sum(dim=2)
+        r = r_p / torch.clamp(r_omega, min=1e-12)
+
+        masked_r = r * valid_positives_mask
+        ap_per_query = masked_r[valid_q_mask].sum(dim=1) / n_valid_positives[valid_q_mask].float()
+        ap = ap_per_query.mean()
+        loss = 1.0 - ap
+
+        with torch.no_grad():
+            n_positives = positives_mask.sum(dim=1)
+            best_positive_scores = positive_scores[:, 0].unsqueeze(1)
+            hard_ranking = ((s_qz > best_positive_scores) & negatives_mask).sum(dim=1)
+            recall_at_1 = (hard_ranking[valid_q_mask] < 1).float().mean()
+            stats = {
+                'pr_loss': loss.item(),
+                'ap': ap.item(),
+                'positives_per_query': n_positives.float().mean(dim=0).item(),
+                'selected_positives_per_query': n_valid_positives[valid_q_mask].float().mean(dim=0).item(),
+                'best_positive_ranking': hard_ranking[valid_q_mask].float().mean(dim=0).item(),
+                'recall_at_1': recall_at_1.item(),
+                'avg_embedding_norm': embeddings.norm(dim=1).mean().item(),
+            }
+
+        return loss, stats, None
 
 
 class ExhausitiveVotingLoss:

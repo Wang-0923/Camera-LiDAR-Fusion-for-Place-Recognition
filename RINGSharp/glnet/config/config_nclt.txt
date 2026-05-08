@@ -12,7 +12,7 @@ save_freq = 1
 eval_freq = 2
 
 lr = 1e-4
-epochs = 30
+epochs = 50
 scheduler_milestones = 20
 aug_mode = 3
 weight_decay = 1e-5
@@ -21,6 +21,6 @@ weight_decay = 1e-5
 # map/database session = 2012-02-04, query session = 2012-03-17.
 # train_file and val_file are TrainingTuple pickles generated from both sessions
 # with the NCLT spatial split. test_file is the final EvaluationSet pickle.
-train_file = train_2012-02-04_2012-03-17_25.0_50.0_0.2.pickle
-val_file = val_2012-02-04_2012-03-17_25.0_50.0_0.2.pickle
+train_file = train_2012-02-04_2012-03-17_5.0_7.5_0.2.pickle
+val_file = val_2012-02-04_2012-03-17_5.0_7.5_0.2.pickle
 test_file = test_2012-02-04_2012-03-17_20.0_5.0.pickle

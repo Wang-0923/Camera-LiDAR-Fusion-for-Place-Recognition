@@ -48,6 +48,21 @@ class ModelParams:
         self.bev_fusion_strict_meta = params.getboolean('bev_fusion_strict_meta', False)
         self.bev_fusion_timestamp_tolerance_ms = params.getfloat('bev_fusion_timestamp_tolerance_ms', 50.0)
         self.bev_fusion_prefer_cuda_ms_deform_attn = params.getboolean('bev_fusion_prefer_cuda_ms_deform_attn', True)
+        self.adaptive_fusion = params.getboolean('adaptive_fusion', False)
+        self.adaptive_fusion_rho = params.getfloat('adaptive_fusion_rho', 0.5)
+        self.adaptive_fusion_temperature = params.getfloat('adaptive_fusion_temperature', 0.7)
+        self.adaptive_visual_reliability = params.getboolean('adaptive_visual_reliability', True)
+        self.adaptive_lidar_reliability = params.getboolean('adaptive_lidar_reliability', True)
+        self.adaptive_lidar_reliability_mode = params.get('adaptive_lidar_reliability_mode', 'online').lower()
+        if self.adaptive_lidar_reliability_mode not in ['online', 'offline', 'auto']:
+            raise ValueError(
+                'adaptive_lidar_reliability_mode must be one of ["online", "offline", "auto"], '
+                f'got {self.adaptive_lidar_reliability_mode}'
+            )
+        self.adaptive_lidar_reliability_downsample = params.getfloat('adaptive_lidar_reliability_downsample', 0.3)
+        self.adaptive_lidar_reliability_k = params.getint('adaptive_lidar_reliability_k', 16)
+        self.adaptive_lidar_reliability_min_neighbors = params.getint('adaptive_lidar_reliability_min_neighbors', 3)
+        self.adaptive_eps = params.getfloat('adaptive_eps', 1e-6)
 
         self.aggregation = params.get('aggregation','gem').lower()
         self.lidar_fix_num = params.getint('lidar_fix_num', 20000)
@@ -150,6 +165,10 @@ class ModelParams:
             self.neg_margin = params.getfloat('neg_margin', 0.65)
         elif 'Triplet' in self.loss:
             self.margin = params.getfloat('margin', 0.4)    # Margin used in loss function
+        elif self.loss == 'TruncatedSmoothAP':
+            self.truncated_smoothap_tau1 = params.getfloat('truncated_smoothap_tau1', 0.01)
+            self.truncated_smoothap_similarity = params.get('truncated_smoothap_similarity', 'cosine')
+            self.truncated_smoothap_positives_per_query = params.getint('truncated_smoothap_positives_per_query', 4)
         elif 'Overlap' in self.loss:
             self.use_overlap = True
     

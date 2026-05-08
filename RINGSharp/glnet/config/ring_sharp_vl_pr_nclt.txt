@@ -36,10 +36,23 @@ bev_fusion_prefer_cuda_ms_deform_attn = True
 bev_fusion_strict_meta = True
 bev_fusion_timestamp_tolerance_ms = 50.0
 
+adaptive_fusion = false
+adaptive_fusion_rho = 0.5
+adaptive_fusion_temperature = 0.7
+adaptive_visual_reliability = true
+adaptive_lidar_reliability = true
+adaptive_lidar_reliability_mode = offline
+adaptive_lidar_reliability_downsample = 0.3
+adaptive_lidar_reliability_k = 16
+adaptive_lidar_reliability_min_neighbors = 3
+adaptive_eps = 1e-6
+
 output_dim = 256
 
-loss = BatchHardTripletMarginLoss
-margin = 0.2
+loss = TruncatedSmoothAP
+truncated_smoothap_tau1 = 0.01
+truncated_smoothap_similarity = cosine
+truncated_smoothap_positives_per_query = 4
 
 radius = 40
 theta = 100

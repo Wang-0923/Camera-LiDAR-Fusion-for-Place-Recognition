@@ -323,6 +323,7 @@ class BEVDeformableFusion(nn.Module):
         self,
         visual_bev,
         lidar_bev,
+        adaptive=None,
         visual_meta=None,
         lidar_meta=None,
         strict_meta=False,
@@ -360,8 +361,19 @@ class BEVDeformableFusion(nn.Module):
 
         fv0 = self.visual_adapter(visual_bev)
         fl0 = self.lidar_adapter(lidar_bev)
-        visual_pyramid = self.visual_pyramid(fv0)
-        lidar_pyramid = self.lidar_pyramid(fl0)
+        if adaptive is None:
+            fv = fv0
+            fl = fl0
+            gv = None
+            gl = None
+        else:
+            gv = self._resize_gate(adaptive['Gv'], fv0)
+            gl = self._resize_gate(adaptive['Gl'], fl0)
+            fv = gv * fv0
+            fl = gl * fl0
+
+        visual_pyramid = self.visual_pyramid(fv)
+        lidar_pyramid = self.lidar_pyramid(fl)
         ref = build_bev_reference_points(
             batch_size=visual_bev.shape[0],
             height=h,
@@ -371,17 +383,25 @@ class BEVDeformableFusion(nn.Module):
             dtype=visual_bev.dtype,
         )
 
-        ov = self.lidar_to_visual(fv0, lidar_pyramid, ref)
-        ol = self.visual_to_lidar(fl0, visual_pyramid, ref)
-        f_cat = torch.cat([fv0, fl0, ov, ol], dim=1)
+        ov = self.lidar_to_visual(fv, lidar_pyramid, ref)
+        ol = self.visual_to_lidar(fl, visual_pyramid, ref)
+        if adaptive is not None:
+            # Cross-modal outputs are gated by the reliability of the source
+            # modality injected through attention.
+            ov = gl * ov
+            ol = gv * ol
+
+        f_cat = torch.cat([fv, fl, ov, ol], dim=1)
         f_conv = self.fuse_conv(f_cat)
-        f_base = self.base_proj(torch.cat([fv0, fl0], dim=1))
+        f_base = self.base_proj(torch.cat([fv, fl], dim=1))
         fused = self.out_proj(f_conv + f_base)
 
         output = {
             'fused_bev': fused,
             'attention_backend': self.lidar_to_visual.attn.backend,
         }
+        if adaptive is not None:
+            output['adaptive'] = adaptive
         if return_intermediates:
             output.update({
                 'visual_adapter_bev': fv0,
@@ -392,7 +412,23 @@ class BEVDeformableFusion(nn.Module):
                 'lidar_to_visual': ov,
                 'visual_to_lidar': ol,
             })
+            if adaptive is not None:
+                output.update({
+                    'visual_gated_bev': fv,
+                    'lidar_gated_bev': fl,
+                })
         return output
+
+    @staticmethod
+    def _resize_gate(gate, target):
+        if gate.ndim != 4 or gate.shape[1] != 1:
+            raise ValueError(f'Adaptive gate must have shape [B,1,H,W], got {tuple(gate.shape)}')
+        if gate.shape[0] != target.shape[0]:
+            raise ValueError(f'Adaptive gate batch mismatch: gate={gate.shape[0]}, target={target.shape[0]}')
+        gate = gate.to(device=target.device, dtype=target.dtype)
+        if gate.shape[-2:] != target.shape[-2:]:
+            gate = F.interpolate(gate, size=target.shape[-2:], mode='bilinear', align_corners=False)
+        return gate
 
 
 def _is_missing(value):

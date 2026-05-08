@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+from glnet.models.adaptive_fusion import AdaptiveReliabilityEstimator
 from glnet.models.bev_fusion import BEVDeformableFusion
 from glnet.utils.params import ModelParams
 
@@ -159,6 +160,7 @@ class RINGSharpVL(nn.Module):
         self.global_descriptor_dim = model_params.global_descriptor_dim
         self.bev_fusion_strict_meta = model_params.bev_fusion_strict_meta
         self.bev_fusion_timestamp_tolerance_ms = model_params.bev_fusion_timestamp_tolerance_ms
+        self.adaptive_fusion_enabled = model_params.adaptive_fusion
         self.feature_dim = model_params.bev_fusion_out_channels
         self.spec_descriptor_head = self.visual_branch.spec_descriptor_head if self.descriptor_from_spec else None
 
@@ -173,6 +175,22 @@ class RINGSharpVL(nn.Module):
             dropout=model_params.bev_fusion_dropout,
             drop_path=model_params.bev_fusion_drop_path,
             prefer_cuda_ms_deform_attn=model_params.bev_fusion_prefer_cuda_ms_deform_attn,
+        )
+        self.adaptive_reliability_estimator = (
+            AdaptiveReliabilityEstimator(
+                dataset_type=model_params.dataset_type,
+                rho=model_params.adaptive_fusion_rho,
+                temperature=model_params.adaptive_fusion_temperature,
+                use_visual_reliability=model_params.adaptive_visual_reliability,
+                use_lidar_reliability=model_params.adaptive_lidar_reliability,
+                eps=model_params.adaptive_eps,
+                lidar_reliability_mode=model_params.adaptive_lidar_reliability_mode,
+                lidar_downsample_voxel_size=model_params.adaptive_lidar_reliability_downsample,
+                lidar_knn=model_params.adaptive_lidar_reliability_k,
+                lidar_min_neighbors=model_params.adaptive_lidar_reliability_min_neighbors,
+            )
+            if self.adaptive_fusion_enabled
+            else None
         )
 
         self.occ_conv_yaw = nn.Sequential(
@@ -192,8 +210,8 @@ class RINGSharpVL(nn.Module):
             nn.Sigmoid(),
         )
 
-    def extract_vision_bev(self, batch):
-        return self.visual_branch.extract_vision_bev(batch)
+    def extract_vision_bev(self, batch, return_reliability=False):
+        return self.visual_branch.extract_vision_bev(batch, return_reliability=return_reliability)
 
     def extract_bev_features(self, batch):
         return self.extract_vision_bev(batch)
@@ -202,13 +220,28 @@ class RINGSharpVL(nn.Module):
         return self.lidar_branch.extract_lidar_bev(batch)
 
     def extract_fused_bev(self, batch):
-        visual_outputs = self.extract_vision_bev(batch)
+        return_visual_reliability = (
+            self.adaptive_fusion_enabled
+            and self.adaptive_reliability_estimator is not None
+            and self.adaptive_reliability_estimator.use_visual_reliability
+        )
+        visual_outputs = self.extract_vision_bev(batch, return_reliability=return_visual_reliability)
         lidar_outputs = self.extract_lidar_bev(batch)
         bev_meta = batch.get('bev_meta')
+        adaptive = None
+        if self.adaptive_fusion_enabled:
+            adaptive = self.adaptive_reliability_estimator(
+                batch=batch,
+                visual_bev=visual_outputs['bev'],
+                lidar_bev=lidar_outputs['bev'],
+                visual_outputs=visual_outputs,
+                lidar_outputs=lidar_outputs,
+            )
 
         fusion_outputs = self.bev_fusion(
             visual_outputs['bev'],
             lidar_outputs['bev'],
+            adaptive=adaptive,
             visual_meta=bev_meta,
             lidar_meta=bev_meta,
             strict_meta=self.bev_fusion_strict_meta,
@@ -223,6 +256,14 @@ class RINGSharpVL(nn.Module):
         visual_bev = visual_outputs['bev']
         lidar_bev = lidar_outputs['bev']
         fused_bev = fusion_outputs['fused_bev']
+        extra_outputs = {
+            'visual_bev': visual_bev,
+            'lidar_bev': lidar_bev,
+            'fused_bev': fused_bev,
+            'bev_fusion_backend': fusion_outputs['attention_backend'],
+        }
+        if 'adaptive' in fusion_outputs:
+            extra_outputs['adaptive'] = fusion_outputs['adaptive']
 
         return run_ring_sharp_downstream(
             self,
@@ -231,12 +272,7 @@ class RINGSharpVL(nn.Module):
             bev_confidence=visual_outputs['confidence'],
             yaw_module=self.occ_conv_yaw,
             trans_module=self.occ_conv_trans,
-            extra_outputs={
-                'visual_bev': visual_bev,
-                'lidar_bev': lidar_bev,
-                'fused_bev': fused_bev,
-                'bev_fusion_backend': fusion_outputs['attention_backend'],
-            },
+            extra_outputs=extra_outputs,
         )
 
     def print_info(self):
