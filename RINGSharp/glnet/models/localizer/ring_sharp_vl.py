@@ -182,6 +182,9 @@ class RINGSharpVL(nn.Module):
                 rho=model_params.adaptive_fusion_rho,
                 temperature=model_params.adaptive_fusion_temperature,
                 eps=model_params.adaptive_eps,
+                lidar_downsample_voxel_size=model_params.adaptive_lidar_reliability_downsample,
+                lidar_knn=model_params.adaptive_lidar_reliability_k,
+                lidar_min_neighbors=model_params.adaptive_lidar_reliability_min_neighbors,
             )
             if self.adaptive_fusion_enabled
             else None

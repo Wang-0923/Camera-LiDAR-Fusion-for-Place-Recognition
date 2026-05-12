@@ -161,7 +161,8 @@ def test_fusion_workflow_uses_both_modalities_before_downstream():
 def test_adaptive_reliability_maps_and_gates():
     visual_bev = torch.randn(2, 80, 16, 16)
     lidar_bev = torch.randn(2, 128, 16, 16)
-    batch = {}
+    lidar_reliability = torch.rand(2, 1, 16, 16)
+    batch = {'lidar_reliability_bev': lidar_reliability}
     visual_outputs = {'visual_reliability_bev': torch.rand(2, 1, 16, 16)}
     estimator = AdaptiveReliabilityEstimator(dataset_type='nclt', rho=0.5, temperature=0.7)
 
@@ -171,18 +172,19 @@ def test_adaptive_reliability_maps_and_gates():
     for key in ['Mv', 'Ml', 'Wv', 'Wl', 'Gv', 'Gl']:
         assert adaptive[key].shape == (2, 1, 16, 16)
     assert torch.allclose(adaptive['Wv'] + adaptive['Wl'], torch.ones_like(adaptive['Wv']), atol=1e-5)
-    assert torch.allclose(adaptive['Wv'], adaptive['Mv'], atol=1e-6)
-    assert torch.allclose(adaptive['Wl'], 1.0 - adaptive['Mv'], atol=1e-6)
-    assert torch.allclose(adaptive['Ml'], torch.ones_like(adaptive['Ml']), atol=1e-6)
-    assert torch.allclose(adaptive['Gv'], 1.0 + 0.5 * (adaptive['Wv'] - 1.0), atol=1e-6)
-    assert torch.allclose(adaptive['Gl'], 1.0 + 0.5 * adaptive['Wl'], atol=1e-6)
+    expected_weights = torch.softmax(torch.cat([adaptive['Mv'], adaptive['Ml']], dim=1) / 0.7, dim=1)
+    assert torch.allclose(adaptive['Wv'], expected_weights[:, 0:1], atol=1e-6)
+    assert torch.allclose(adaptive['Wl'], expected_weights[:, 1:2], atol=1e-6)
+    assert torch.allclose(adaptive['Ml'], lidar_reliability.clamp(1e-6, 1.0 - 1e-6), atol=1e-6)
+    assert torch.allclose(adaptive['Gv'], 1.0 + 0.5 * (2.0 * adaptive['Wv'] - 1.0), atol=1e-6)
+    assert torch.allclose(adaptive['Gl'], 1.0 + 0.5 * (2.0 * adaptive['Wl'] - 1.0), atol=1e-6)
 
 
 @torch.no_grad()
 def test_adaptive_rho_zero_gates_are_identity_and_fusion_shape():
     visual_bev = torch.randn(2, 80, 16, 16)
     lidar_bev = torch.randn(2, 128, 16, 16)
-    batch = {}
+    batch = {'lidar_reliability_bev': torch.rand(2, 1, 16, 16)}
     visual_outputs = {'visual_reliability_bev': torch.rand(2, 1, 16, 16)}
     estimator = AdaptiveReliabilityEstimator(dataset_type='nclt', rho=0.0, temperature=0.7)
     adaptive = estimator(batch, visual_bev, lidar_bev, visual_outputs=visual_outputs)

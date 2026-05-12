@@ -22,6 +22,7 @@ from glnet.datasets.base_datasets import TrainingTuple
 from glnet.datasets.nclt.utils import relative_pose
 from glnet.utils.common_utils import _ex
 from glnet.utils.data_utils.point_clouds import visualize_2d_data, generate_bev, generate_bev_occ, icp, o3d_icp
+from glnet.utils.data_utils.lidar_reliability import compute_lidar_reliability_bev
 from glnet.datasets.panorama import generate_sph_image
 from glnet.utils.data_utils.poses import m2ypr
 
@@ -45,6 +46,11 @@ def generate_training_tuples(
     neg_threshold: float = 50,
     bev: bool = False,
     sph: bool = False,
+    lidar_reliability: bool = False,
+    overwrite_lidar_reliability: bool = False,
+    lidar_reliability_downsample: float = 0.3,
+    lidar_reliability_k: int = 16,
+    lidar_reliability_min_neighbors: int = 3,
 ):
     # displacement: displacement between consecutive anchors (if None all scans are takes as anchors).
     #               Use some small displacement to ensure there's only one scan if the vehicle does not move
@@ -52,19 +58,42 @@ def generate_training_tuples(
     tuples = {}   # Dictionary of training tuples: tuples[ndx] = (sef ot positives, set of non negatives)
     for anchor_ndx in tqdm.tqdm(range(len(ds))):
         reading_filepath = os.path.join(ds.dataset_root, ds.rel_scan_filepath[anchor_ndx])
+        pc_for_cache = None
         if bev:
             bev_filename = reading_filepath.replace('bin', 'npy')
             bev_filename = bev_filename.replace('velodyne_sync', 'bev')
+            os.makedirs(os.path.dirname(bev_filename), exist_ok=True)
             if os.path.exists(bev_filename):
                 pass
             else: 
-                pc = load_lidar_file_nclt(reading_filepath).astype(np.float32)
-                pc_bev = generate_bev(pc, Z=bev_z, Y=bev_y, X=bev_x, bounds=bounds).numpy()
+                pc_for_cache = load_lidar_file_nclt(reading_filepath).astype(np.float32)
+                pc_bev = generate_bev(pc_for_cache, Z=bev_z, Y=bev_y, X=bev_x, bounds=bounds).numpy()
                 print(f'Generating {bev_filename}')
                 np.save(bev_filename, pc_bev)
                 # for i in range(20):
                 #     visualize_2d_data(pc_bev[i], f'pc_bev_{i}.jpg')
                 #     visualize_2d_data(pc_bev_2[i], f'pc_bev_2_{i}.jpg')
+
+        if lidar_reliability:
+            reliability_filename = reading_filepath.replace('bin', 'npy')
+            reliability_filename = reliability_filename.replace('velodyne_sync', 'lidar_reliability_bev')
+            os.makedirs(os.path.dirname(reliability_filename), exist_ok=True)
+            if os.path.exists(reliability_filename) and not overwrite_lidar_reliability:
+                pass
+            else:
+                pc_for_cache = load_lidar_file_nclt(reading_filepath).astype(np.float32) if pc_for_cache is None else pc_for_cache
+                rel_bev = compute_lidar_reliability_bev(
+                    pc_for_cache,
+                    Z=bev_z,
+                    Y=bev_y,
+                    X=bev_x,
+                    bounds=bounds,
+                    downsample_voxel_size=lidar_reliability_downsample,
+                    k=lidar_reliability_k,
+                    min_neighbors=lidar_reliability_min_neighbors,
+                )
+                print(f'Generating {reliability_filename}')
+                np.save(reliability_filename, rel_bev.astype(np.float32))
 
         if sph:
             reading_filepath = os.path.join(ds.dataset_root, ds.rel_scan_filepath[anchor_ndx])
@@ -197,7 +226,9 @@ def _validate_nclt_inputs(dataset_root, sequences):
 
 
 def _generate_one_split(dataset_root, sequences, split, output_prefix, pos_threshold, neg_threshold, sampling_distance,
-                        bev=False, sph=False):
+                        bev=False, sph=False, lidar_reliability=False, overwrite_lidar_reliability=False,
+                        lidar_reliability_downsample=0.3, lidar_reliability_k=16,
+                        lidar_reliability_min_neighbors=3):
     print('-------- Generating NCLT training tuples --------')
     print(f'Dataset root: {dataset_root}')
     print(f'Sequences: {sequences}')
@@ -218,6 +249,11 @@ def _generate_one_split(dataset_root, sequences, split, output_prefix, pos_thres
         neg_threshold,
         bev=bev,
         sph=sph,
+        lidar_reliability=lidar_reliability,
+        overwrite_lidar_reliability=overwrite_lidar_reliability,
+        lidar_reliability_downsample=lidar_reliability_downsample,
+        lidar_reliability_k=lidar_reliability_k,
+        lidar_reliability_min_neighbors=lidar_reliability_min_neighbors,
     )
     pickle_name = f'{output_prefix}{_sequence_name(sequences)}_{pos_threshold}_{neg_threshold}_{sampling_distance}.pickle'
     tuples_filepath = os.path.join(dataset_root, pickle_name)
@@ -231,11 +267,27 @@ def _generate_one_split(dataset_root, sequences, split, output_prefix, pos_thres
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate NCLT Protocol 1 train and validation tuples')
     parser.add_argument('--dataset_root', default='Data/NCLT')
+    parser.add_argument(
+        '--sequences',
+        nargs='+',
+        default=PROTOCOL1_SEQUENCES,
+        help='NCLT sequences used to generate train/val tuples, e.g. --sequences 2012-02-04 2012-02-18',
+    )
     parser.add_argument('--bev', action='store_true', help='Generate bevs projected by point clouds')
     parser.add_argument('--sph', action='store_true', help='Generate panorama images')
+    parser.add_argument('--lidar_reliability', action='store_true',
+                        help='Generate offline LiDAR BEV reliability maps')
+    parser.add_argument('--overwrite_lidar_reliability', action='store_true',
+                        help='Overwrite existing LiDAR reliability cache files')
+    parser.add_argument('--lidar_reliability_downsample', type=float, default=0.3,
+                        help='Voxel downsample size before LiDAR PCA reliability computation')
+    parser.add_argument('--lidar_reliability_k', type=int, default=16,
+                        help='kNN size for LiDAR PCA reliability computation')
+    parser.add_argument('--lidar_reliability_min_neighbors', type=int, default=3,
+                        help='Minimum neighbors for LiDAR PCA reliability')
     args = parser.parse_args()
 
-    sequences = PROTOCOL1_SEQUENCES
+    sequences = args.sequences
     dataset_root = _ex(args.dataset_root)
 
     print(f'Dataset root: {dataset_root}')
@@ -257,10 +309,20 @@ if __name__ == '__main__':
     generated_paths = [
         _generate_one_split(dataset_root, sequences, split='train', output_prefix='train',
                             pos_threshold=PROTOCOL1_POS_THRESHOLD, neg_threshold=PROTOCOL1_NEG_THRESHOLD,
-                            sampling_distance=PROTOCOL1_SAMPLING_DISTANCE, bev=args.bev, sph=args.sph),
+                            sampling_distance=PROTOCOL1_SAMPLING_DISTANCE, bev=args.bev, sph=args.sph,
+                            lidar_reliability=args.lidar_reliability,
+                            overwrite_lidar_reliability=args.overwrite_lidar_reliability,
+                            lidar_reliability_downsample=args.lidar_reliability_downsample,
+                            lidar_reliability_k=args.lidar_reliability_k,
+                            lidar_reliability_min_neighbors=args.lidar_reliability_min_neighbors),
         _generate_one_split(dataset_root, sequences, split='test', output_prefix='val',
                             pos_threshold=PROTOCOL1_POS_THRESHOLD, neg_threshold=PROTOCOL1_NEG_THRESHOLD,
-                            sampling_distance=PROTOCOL1_SAMPLING_DISTANCE, bev=args.bev, sph=args.sph),
+                            sampling_distance=PROTOCOL1_SAMPLING_DISTANCE, bev=args.bev, sph=args.sph,
+                            lidar_reliability=args.lidar_reliability,
+                            overwrite_lidar_reliability=args.overwrite_lidar_reliability,
+                            lidar_reliability_downsample=args.lidar_reliability_downsample,
+                            lidar_reliability_k=args.lidar_reliability_k,
+                            lidar_reliability_min_neighbors=args.lidar_reliability_min_neighbors),
     ]
     print('-------- Done --------')
     for path in generated_paths:

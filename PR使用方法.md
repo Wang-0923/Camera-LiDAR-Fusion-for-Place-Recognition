@@ -37,13 +37,14 @@ scp -rP 27027 /home/a/ringsharp root@connect.bjb1.seetacloud.com:/root/autodl-fs
 ```
 1. 在本地执行：
 rsync -avz \
-  -e "ssh -p 27027" \
+  -e "ssh -p 22009" \
   --exclude "build/" \
   --exclude "glnet.egg-info/" \
+  --exclude "results/" \
   --exclude "__pycache__/" \
   --exclude "*.pyc" \
   /home/a/ringsharp/RINGSharp/ \
-  root@connect.bjb1.seetacloud.com:/root/autodl-fs/ringsharp/RINGSharp/
+  root@connect.bjb2.seetacloud.com:/root/autodl-fs/ringsharp/RINGSharp/
 
 2. 在Autodl实例中执行：
 cd /root/autodl-fs/ringsharp
@@ -124,12 +125,17 @@ python glnet/datasets/nclt/image_preprocess.py \
 
 3. 生成训练/验证 tuples
 python glnet/datasets/nclt/generate_training_tuples.py \
-  --dataset_root /root/autodl-tmp/Data/NCLT
-  --bev
+  --dataset_root /root/autodl-tmp/Data/NCLT \
+  --sequences 2012-02-04 2012-02-18 \
+  --bev \
+  --lidar_reliability
 
 python glnet/datasets/nclt/generate_evaluation_sets.py \
-  --dataset_root /root/autodl-tmp/Data/NCLT
-  --bev
+  --dataset_root /root/autodl-tmp/Data/NCLT \
+  --map_sequence 2012-02-04 \
+  --query_sequence 2012-02-18 \
+  --bev \
+  --lidar_reliability
 ```
 
 #### *训练
@@ -140,7 +146,23 @@ python3 tools/train.py \
   --model_config glnet/config/ring_sharp_vl_pr_nclt.txt \
   --exp_name ring_sharp_vl_pr_nclt \
   --dataset_type nclt \
-  --dataset_root Data/NCLT
+  --dataset_root /root/autodl-tmp/Data/NCLT \
+  --weight xxx.pth
+```
+
+#### 可视化
+
+```
+python tools/visualize_vl_bev_debug.py \
+  --dataset_type nclt \
+  --dataset_root /root/autodl-tmp/Data/NCLT \
+  --sequence 2012-03-17 \
+  --frame_idx 100 \
+  --model_config glnet/config/ring_sharp_vl_pr_nclt.txt \
+  --weight results/weights/ring_sharp_vl_pr_nclt/model_xxx.pth \
+  --output_dir results/vl_debug \
+  --device cuda \
+  --overwrite
 ```
 
 #### 训练中查看loss曲线

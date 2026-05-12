@@ -51,6 +51,9 @@ class ModelParams:
         self.adaptive_fusion = params.getboolean('adaptive_fusion', False)
         self.adaptive_fusion_rho = params.getfloat('adaptive_fusion_rho', 0.5)
         self.adaptive_fusion_temperature = params.getfloat('adaptive_fusion_temperature', 0.7)
+        self.adaptive_lidar_reliability_downsample = params.getfloat('adaptive_lidar_reliability_downsample', 0.3)
+        self.adaptive_lidar_reliability_k = params.getint('adaptive_lidar_reliability_k', 16)
+        self.adaptive_lidar_reliability_min_neighbors = params.getint('adaptive_lidar_reliability_min_neighbors', 3)
         self.adaptive_eps = params.getfloat('adaptive_eps', 1e-6)
 
         self.aggregation = params.get('aggregation','gem').lower()

@@ -36,6 +36,9 @@ def _format_revisit_threshold(revisit_threshold: float) -> str:
     return str(revisit_threshold)
 
 
+ADAPTIVE_STAT_KEYS = ['Wv', 'Wl']
+
+
 class PREvaluator(Evaluator):
     """PR-only evaluator for global descriptors."""
 
@@ -74,6 +77,7 @@ class PREvaluator(Evaluator):
 
         orig_pc = np.asarray(orig_pc)
         pc = None
+        lidar_reliability_bev = None
         if self.params.use_bev:
             bev_folder = os.path.dirname(bev_path)
             os.makedirs(bev_folder, exist_ok=True)
@@ -83,6 +87,19 @@ class PREvaluator(Evaluator):
                 bev = generate_bev(orig_pc, Z=self.Z, Y=self.Y, X=self.X, bounds=self.bounds)
                 np.save(bev_path, bev.detach().cpu().numpy())
             pc = bev.unsqueeze(0).to(self.device)
+
+            if self.params.adaptive_fusion:
+                lidar_rel_path = bev_path.replace('bev', 'lidar_reliability_bev')
+                if os.path.isfile(lidar_rel_path):
+                    lidar_reliability_bev = to_torch(np.load(lidar_rel_path)).float()
+                    if lidar_reliability_bev.ndim == 2:
+                        lidar_reliability_bev = lidar_reliability_bev.unsqueeze(0)
+                    if lidar_reliability_bev.ndim != 3 or lidar_reliability_bev.shape[0] != 1:
+                        raise ValueError(
+                            f'LiDAR reliability cache must have shape [1,H,W] or [H,W], got '
+                            f'{tuple(lidar_reliability_bev.shape)} at {lidar_rel_path}'
+                        )
+                    lidar_reliability_bev = lidar_reliability_bev.unsqueeze(0).to(self.device)
 
         imgs = None
         if self.params.use_rgb:
@@ -97,6 +114,8 @@ class PREvaluator(Evaluator):
             imgs = imgs.to(self.device)
 
         batch = {'pc': pc, 'img': imgs, 'orig_pc': orig_pc}
+        if lidar_reliability_bev is not None:
+            batch['lidar_reliability_bev'] = lidar_reliability_bev
         if self.params.enable_bev_fusion:
             batch['bev_meta'] = [
                 build_bev_alignment_meta(
@@ -110,15 +129,44 @@ class PREvaluator(Evaluator):
 
         return batch
 
-    def compute_embeddings(self, eval_subset: List[EvaluationTuple], model, *args, **kwargs):
+    def _empty_adaptive_accumulator(self):
+        return {
+            key: {'sum': 0.0, 'count': 0}
+            for key in ADAPTIVE_STAT_KEYS
+        }
+
+    def _update_adaptive_accumulator(self, accumulator, adaptive):
+        if adaptive is None:
+            return
+        for key in ADAPTIVE_STAT_KEYS:
+            if key not in adaptive or adaptive[key] is None:
+                continue
+            value = adaptive[key].detach().float()
+            accumulator[key]['sum'] += float(value.sum().item())
+            accumulator[key]['count'] += int(value.numel())
+
+    def _finalize_adaptive_accumulator(self, accumulator, prefix):
+        stats = {}
+        for key in ADAPTIVE_STAT_KEYS:
+            count = accumulator[key]['count']
+            if count == 0:
+                continue
+            mean = accumulator[key]['sum'] / float(count)
+            stats[f'adaptive_{prefix}_{key}_mean'] = float(mean)
+        return stats
+
+    def compute_embeddings(self, eval_subset: List[EvaluationTuple], model, collect_adaptive_stats=False, *args, **kwargs):
         model.eval()
         embeddings = None
+        adaptive_accumulator = self._empty_adaptive_accumulator() if collect_adaptive_stats else None
 
         for ndx, e in tqdm.tqdm(enumerate(eval_subset), total=len(eval_subset)):
             batch = self._build_batch(e)
             with torch.no_grad():
                 y = model(batch)
                 desc = y['global'].detach().cpu().numpy()
+                if collect_adaptive_stats:
+                    self._update_adaptive_accumulator(adaptive_accumulator, y.get('adaptive'))
 
             if desc.ndim == 1:
                 desc = desc.reshape(1, -1)
@@ -128,14 +176,27 @@ class PREvaluator(Evaluator):
 
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         embeddings = embeddings / np.maximum(norms, 1e-12)
+        if collect_adaptive_stats:
+            return embeddings, adaptive_accumulator
         return embeddings
 
     def evaluate(self, model, exp_name=None, *args, **kwargs):
         if exp_name is None:
             exp_name = self.params.model
 
-        map_embeddings = self.compute_embeddings(self.eval_set.map_set, model)
-        query_embeddings = self.compute_embeddings(self.eval_set.query_set, model)
+        collect_adaptive_stats = bool(getattr(self.params, 'adaptive_fusion', False))
+        if collect_adaptive_stats:
+            map_embeddings, map_adaptive_acc = self.compute_embeddings(
+                self.eval_set.map_set, model, collect_adaptive_stats=True
+            )
+            query_embeddings, query_adaptive_acc = self.compute_embeddings(
+                self.eval_set.query_set, model, collect_adaptive_stats=True
+            )
+        else:
+            map_embeddings = self.compute_embeddings(self.eval_set.map_set, model)
+            query_embeddings = self.compute_embeddings(self.eval_set.query_set, model)
+            map_adaptive_acc = None
+            query_adaptive_acc = None
         map_positions = self.eval_set.get_map_positions()
         query_positions = self.eval_set.get_query_positions()
         map_tree = KDTree(map_positions)
@@ -194,6 +255,9 @@ class PREvaluator(Evaluator):
             'topk': max_k,
             'radius': self.radius,
         }
+        if collect_adaptive_stats:
+            metrics.update(self._finalize_adaptive_accumulator(map_adaptive_acc, 'map'))
+            metrics.update(self._finalize_adaptive_accumulator(query_adaptive_acc, 'query'))
 
         for radius_ndx, revisit_threshold in enumerate(self.radius):
             denom = max(positives[revisit_threshold], 1)
