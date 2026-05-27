@@ -180,6 +180,70 @@ class NetVLAD(torch.nn.Module):
         print('Image Backbone parameters: {}'.format(n_params))
 
 
+class OfficialNetVLAD(nn.Module):
+    """PyTorch wrapper for Relja Arandjelovic's official MatConvNet NetVLAD.
+
+    The official model expects RGB images in 0-255 space with the MatConvNet
+    VGG mean subtracted. RINGSharp's evaluator supplies ImageNet-normalized
+    tensors, so this wrapper reverses that normalization internally.
+    """
+
+    def __init__(self, model_params: ModelParams, pca_dim=4096, input_is_bgr=True):
+        super().__init__()
+        self.model_params = model_params
+        self.input_is_bgr = input_is_bgr
+        self.pca_dim = pca_dim
+
+        encoder = torchvision.models.vgg16(pretrained=False)
+        self.encoder = nn.Sequential(*list(encoder.features.children())[:-2])
+        self.pool = NetVLAD_Pretrain(num_clusters=64, dim=512, vladv2=False)
+        self.whiten = nn.Linear(64 * 512, pca_dim)
+
+        self.register_buffer('imagenet_mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1), persistent=False)
+        self.register_buffer('imagenet_std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1), persistent=False)
+        self.register_buffer(
+            'matconvnet_mean',
+            torch.tensor([123.68, 116.779, 103.939], dtype=torch.float32).view(1, 3, 1, 1),
+            persistent=False,
+        )
+
+    def _prepare_image(self, x):
+        if x.ndim == 5:
+            if not self.model_params.use_panorama:
+                x = x[:, 0, ...]
+            else:
+                b, s, c, h, w = x.shape
+                if s != 1:
+                    raise ValueError(
+                        'OfficialNetVLAD with use_panorama=True expects one stitched image per sample; '
+                        f'got {s} views'
+                    )
+                x = x.reshape(b, c, h, w)
+        if x.ndim != 4 or x.shape[1] != 3:
+            raise ValueError(f'OfficialNetVLAD expects image tensor [B,3,H,W], got {tuple(x.shape)}')
+
+        x = x * self.imagenet_std.to(x) + self.imagenet_mean.to(x)
+        x = x.clamp(0.0, 1.0) * 255.0
+        if self.input_is_bgr:
+            x = x[:, [2, 1, 0], :, :]
+        x = x - self.matconvnet_mean.to(x)
+        return x
+
+    def forward(self, batch):
+        x = self._prepare_image(batch['img'])
+        x = self.encoder(x)
+        x = self.pool(x)
+        x = self.whiten(x)
+        x = F.normalize(x, p=2, dim=1)
+        return {'global': x}
+
+    def print_info(self):
+        print('Model class: Official Relja NetVLAD')
+        n_params = sum(param.nelement() for param in self.parameters())
+        print('Total parameters: {}'.format(n_params))
+        print('Output descriptor dim: {}'.format(self.pca_dim))
+
+
 def double_conv(in_channels, out_channels):
     return nn.Sequential(
         nn.Conv2d(in_channels, out_channels, 3, padding=1),

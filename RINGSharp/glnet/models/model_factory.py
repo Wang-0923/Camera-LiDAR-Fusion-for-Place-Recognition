@@ -6,7 +6,7 @@ from glnet.models.localizer.sfrs import SFRSModel
 from glnet.models.localizer.ring_sharp_v import RINGSharpV
 from glnet.models.localizer.ring_sharp_vl import RINGSharpVL
 from glnet.models.localizer.vdisco import vDiSCO
-from glnet.models.localizer.netvlad import NetVLAD, NetVLAD_Pretrain
+from glnet.models.localizer.netvlad import NetVLAD, NetVLAD_Pretrain, OfficialNetVLAD
 from glnet.models.localizer.patch_netvlad import PatchNetVLAD_Pretrain
 
 # LiDAR Localization Network
@@ -55,6 +55,8 @@ def model_factory(model_params: ModelParams):
         model = RINGSharpL(model_params)
     elif 'vdisco' in model_params.model:
         model = vDiSCO(model_params)
+    elif 'official_netvlad' in model_params.model:
+        model = OfficialNetVLAD(model_params)
     elif 'netvlad' in model_params.model and 'pretrain' not in model_params.model:
         model = NetVLAD(model_params)
     elif 'netvlad_pretrain' in model_params.model and 'patch' not in model_params.model:

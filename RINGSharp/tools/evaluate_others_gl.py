@@ -29,6 +29,17 @@ from tools.plot_PR_curve import compute_PR_pairs
 from tools.plot_pose_errors import plot_cdf, cal_recall_pe
 
 
+def _load_state_dict_compatible(model, state_dict, strict=True):
+    model_state = model.state_dict()
+    checkpoint_has_module = any(k.startswith('module.') for k in state_dict.keys())
+    model_has_module = any(k.startswith('module.') for k in model_state.keys())
+    if checkpoint_has_module and not model_has_module:
+        state_dict = {k[len('module.'):]: v for k, v in state_dict.items()}
+    elif model_has_module and not checkpoint_has_module:
+        state_dict = {'module.' + k: v for k, v in state_dict.items()}
+    return model.load_state_dict(state_dict, strict=strict)
+
+
 class GLEvaluator(Evaluator):
     # Evaluation of Global Localization
     default_config = {
@@ -544,6 +555,18 @@ if __name__ == "__main__":
             model.load_state_dict(checkpoint['model'], strict=True)
             # corr2soft.load_state_dict(checkpoint['corr2soft'], strict=True)
             corr2soft = corr2soft.to(device)
+        elif 'overlaptransformer' in model_params.model:
+            checkpoint = torch.load(weight, map_location=device)
+            if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+                _load_state_dict_compatible(model, checkpoint['state_dict'], strict=True)
+            elif isinstance(checkpoint, dict) and 'model' in checkpoint:
+                _load_state_dict_compatible(model, checkpoint['model'], strict=True)
+            else:
+                _load_state_dict_compatible(model, checkpoint, strict=True)
+        elif 'official_netvlad' in model_params.model:
+            checkpoint = torch.load(weight, map_location=device)
+            state_dict = checkpoint['model'] if isinstance(checkpoint, dict) and 'model' in checkpoint else checkpoint
+            _load_state_dict_compatible(model, state_dict, strict=True)
         else:
             checkpoint = torch.load(weight, map_location=device)
             model.load_state_dict(checkpoint['model'], strict=True)

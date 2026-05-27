@@ -1,0 +1,17 @@
+[MODEL]
+model = official_netvlad_nclt
+use_rgb = True
+use_panorama = True
+cam_id = 0,1,2,3,4
+
+use_xyz = False
+normalize = True
+
+output_dim = 4096
+feature_dim = 512
+
+loss = BatchHardTripletMarginLoss
+margin = 0.2
+
+Height = 224
+Width = 384
