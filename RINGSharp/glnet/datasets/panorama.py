@@ -8,8 +8,8 @@ from glnet.utils.common_utils import _ex
 
 
 def generate_sph_image(images, dataset_type, prespheredir):
-    stitcher = Stitcher(dataset_type)
-    sph_img = stitcher.stitch(images, prespheredir)
+    stitcher = Stitcher(dataset_type, prespheredir)
+    sph_img = stitcher.stitch(images)
     sph_img = sph_img.astype(np.uint8)
     sph_img = cv2.cvtColor(sph_img, cv2.COLOR_BGR2RGB)
     sph_img = cv2.rotate(sph_img, cv2.ROTATE_180)
@@ -107,7 +107,7 @@ class Stitcher:
             points = np.load(self.sphere_points_path)
             pix = np.load(self.pix_path)
         else:
-            points, pix_x, pix_y = self.generate_sphere_points(outrow, outcol, f)
+            points, pix = self.generate_sphere_points(outrow, outcol, f)
             np.save(self.sphere_points_path, points)
             np.save(self.pix_path, pix)
         
