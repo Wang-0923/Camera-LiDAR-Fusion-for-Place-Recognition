@@ -1,0 +1,26 @@
+[MODEL]
+model = official_adafusion_nclt
+use_rgb = True
+use_panorama = False
+cam_id = 0,1,2,3,4
+
+use_xyz = False
+use_bev = False
+use_range_image = False
+normalize = True
+
+official_adafusion_root = /root/autodl-fs/ringsharp/AdaFusion
+adafusion_image_cam = 1
+adafusion_image_size = 300,400
+adafusion_voxel_shape = 72,72,48
+adafusion_fusion_method = cat
+adafusion_lp = 1
+
+output_dim = 256
+feature_dim = 256
+
+loss = BatchHardTripletMarginLoss
+margin = 0.2
+
+Height = 224
+Width = 384

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from glnet.models.aggregation.NetVLADLoupe import NetVLADLoupe
+from glnet.models.backbone3D.NetVlad import NetVLADLoupe
 from glnet.utils.params import ModelParams
 import numpy as np
 from glnet.datasets.range_image import range_projection
@@ -71,8 +71,8 @@ class OverlapTransformer(nn.Module):
             NETVLAD
             add_batch_norm=False is needed in our work.
         """
-        self.net_vlad = NetVLADLoupe(feature_size=1024, max_samples=900, cluster_size=64,
-                                     output_dim=256, gating=True, add_batch_norm=False,
+        self.net_vlad = NetVLADLoupe(feature_size=1024, cluster_size=64,
+                                     output_dim=256, gating=True, add_norm=False,
                                      is_training=True)
 
         """TODO: How about adding some dense layers?"""

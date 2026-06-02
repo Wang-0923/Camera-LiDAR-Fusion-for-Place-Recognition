@@ -8,6 +8,8 @@ from glnet.models.localizer.ring_sharp_vl import RINGSharpVL
 from glnet.models.localizer.vdisco import vDiSCO
 from glnet.models.localizer.netvlad import NetVLAD, NetVLAD_Pretrain, OfficialNetVLAD
 from glnet.models.localizer.patch_netvlad import PatchNetVLAD_Pretrain
+from glnet.models.localizer.official_minkloc_multimodal import OfficialMinkLocMultimodal
+from glnet.models.localizer.official_adafusion import OfficialAdaFusion
 
 # LiDAR Localization Network
 from glnet.models.localizer.ring import RING
@@ -36,7 +38,8 @@ class L2Norm(nn.Module):
 
 def model_factory(model_params: ModelParams):
     if model_params.enable_bev_fusion:
-        if not model_params.use_rgb:
+        vl_ablation_mode = getattr(model_params, 'vl_ablation_mode', 'fusion')
+        if not model_params.use_rgb and vl_ablation_mode != 'only_lidar':
             raise ValueError('enable_bev_fusion=True requires use_rgb=True so the visual BEV branch can be built')
         model = RINGSharpVL(model_params)
     elif 'mixvpr' in model_params.model:
@@ -57,6 +60,10 @@ def model_factory(model_params: ModelParams):
         model = vDiSCO(model_params)
     elif 'official_netvlad' in model_params.model:
         model = OfficialNetVLAD(model_params)
+    elif 'official_minkloc_multimodal' in model_params.model:
+        model = OfficialMinkLocMultimodal(model_params)
+    elif 'official_adafusion' in model_params.model:
+        model = OfficialAdaFusion(model_params)
     elif 'netvlad' in model_params.model and 'pretrain' not in model_params.model:
         model = NetVLAD(model_params)
     elif 'netvlad_pretrain' in model_params.model and 'patch' not in model_params.model:

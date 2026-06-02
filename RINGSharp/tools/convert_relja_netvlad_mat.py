@@ -91,6 +91,63 @@ def _squeeze_hwio(value):
     return np.squeeze(value)
 
 
+def _numeric_arrays(obj, path='', depth=0, seen=None):
+    if seen is None:
+        seen = set()
+    if depth > 8:
+        return
+    obj_id = id(obj)
+    if obj_id in seen:
+        return
+    seen.add(obj_id)
+
+    if isinstance(obj, np.ndarray):
+        if obj.dtype.names:
+            for field_name in obj.dtype.names:
+                yield from _numeric_arrays(obj[field_name], f'{path}.{field_name}', depth + 1, seen)
+            return
+        if obj.dtype == object:
+            for index, value in np.ndenumerate(obj):
+                yield from _numeric_arrays(value, f'{path}[{index}]', depth + 1, seen)
+        elif np.issubdtype(obj.dtype, np.number):
+            yield path, np.squeeze(obj).astype(np.float32, copy=False)
+        return
+
+    if isinstance(obj, np.void) and obj.dtype.names:
+        for field_name in obj.dtype.names:
+            yield from _numeric_arrays(obj[field_name], f'{path}.{field_name}', depth + 1, seen)
+        return
+
+    field_names = getattr(obj, '_fieldnames', None)
+    if field_names:
+        for field_name in field_names:
+            yield from _numeric_arrays(getattr(obj, field_name), f'{path}.{field_name}', depth + 1, seen)
+        return
+
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            yield from _numeric_arrays(value, f'{path}.{key}', depth + 1, seen)
+        return
+
+    if isinstance(obj, (list, tuple)):
+        for index, value in enumerate(obj):
+            yield from _numeric_arrays(value, f'{path}[{index}]', depth + 1, seen)
+
+
+def _looks_like_512x64(value):
+    value = np.squeeze(value)
+    return value.ndim == 2 and sorted(value.shape) == [64, 512]
+
+
+def _to_512x64(value):
+    value = np.squeeze(value).astype(np.float32, copy=False)
+    if value.shape == (64, 512):
+        value = value.T
+    if value.shape != (512, 64):
+        raise ValueError(f'Expected a [512,64] VLAD matrix, got {value.shape}')
+    return value
+
+
 def _extract_layers(mat):
     if 'net' not in mat:
         raise SystemExit('Input .mat does not contain variable "net"')
@@ -133,6 +190,33 @@ def _looks_like_vlad_weights(weights):
     return a.shape == b.shape and sorted(a.shape) == [64, 512]
 
 
+def _copy_vlad_from_arrays(state, assign, centroids, source='external'):
+    assign = _to_512x64(assign)
+    centroids = _to_512x64(centroids)
+    state['pool.conv.weight'] = torch.from_numpy(assign.T[:, :, None, None].copy())
+    state['pool.centroids'] = torch.from_numpy(centroids.T.copy())
+    print(f'Using VLAD parameters from {source}')
+
+
+def _copy_vlad_from_helper_mat(helper_mat, state):
+    mat = _load_mat(helper_mat)
+    assign = None
+    centroids = None
+    for key in ('clstsAssign', 'assign', 'assignment', 'assignments'):
+        if key in mat:
+            assign = mat[key]
+            break
+    for key in ('clsts', 'centroids', 'centers', 'clusters'):
+        if key in mat:
+            centroids = mat[key]
+            break
+    if assign is None or centroids is None:
+        raise SystemExit(
+            f'Helper MAT {helper_mat} must contain clstsAssign/assign and clsts/centroids arrays'
+        )
+    _copy_vlad_from_arrays(state, assign, centroids, source=helper_mat)
+
+
 def _copy_vlad_layer(layers, state):
     candidates = []
     for layer in layers:
@@ -142,7 +226,59 @@ def _copy_vlad_layer(layers, state):
             candidates.append((name, weights))
 
     if not candidates:
-        raise SystemExit('Could not find a VLAD layer with [512,64] assignment/centroid weights')
+        recursive_candidates = []
+        for ndx, layer in enumerate(layers):
+            name = _string(_field(layer, 'name', '')).lower()
+            arrays = [
+                (path, value)
+                for path, value in _numeric_arrays(layer, f'layer{ndx}:{name}')
+                if _looks_like_512x64(value)
+            ]
+            if len(arrays) >= 2:
+                recursive_candidates.append((ndx, name, arrays))
+
+        if not recursive_candidates:
+            raise SystemExit(
+                'Could not find a VLAD layer with [512,64] assignment/centroid weights, '
+                'including recursive MATLAB opaque/function-handle search. '
+                'This usually means the Relja .mat stores VLAD clsts/clstsAssign inside a MATLAB function handle '
+                'that scipy cannot decode directly.'
+            )
+
+        preferred = [
+            item for item in recursive_candidates
+            if 'vlad' in item[1] or any('vlad' in path.lower() for path, _ in item[2])
+        ]
+        ndx, name, arrays = preferred[-1] if preferred else recursive_candidates[-1]
+
+        def _path_score(path, keywords):
+            path = path.lower()
+            return sum(1 for keyword in keywords if keyword in path)
+
+        assign_items = [
+            item for item in arrays
+            if _path_score(item[0], ('assign', 'assignment', 'trafo', 'soft'))
+        ]
+        centroid_items = [
+            item for item in arrays
+            if _path_score(item[0], ('clst', 'cluster', 'center', 'centroid')) and 'assign' not in item[0].lower()
+        ]
+        assign_path, assign_value = assign_items[-1] if assign_items else arrays[0]
+        centroid_path, centroid_value = centroid_items[-1] if centroid_items else next(
+            item for item in arrays if item[0] != assign_path
+        )
+
+        assign = _to_512x64(assign_value)
+        centroids = _to_512x64(centroid_value)
+        if 'offset' in centroid_path.lower():
+            centroids = -centroids
+
+        print(
+            f'Using VLAD parameters from layer {ndx} "{name}": '
+            f'assignment={assign_path}, centroids={centroid_path}'
+        )
+        _copy_vlad_from_arrays(state, assign, centroids, source=f'layer {ndx}')
+        return
 
     preferred = [item for item in candidates if 'vlad' in item[0]]
     name, weights = preferred[-1] if preferred else candidates[-1]
@@ -155,8 +291,7 @@ def _copy_vlad_layer(layers, state):
         raise SystemExit(f'Unexpected VLAD assignment shape in {name}: {assign.shape}')
 
     centroids = -stored_offset
-    state['pool.conv.weight'] = torch.from_numpy(assign.T[:, :, None, None].copy())
-    state['pool.centroids'] = torch.from_numpy(centroids.T.copy())
+    _copy_vlad_from_arrays(state, assign, centroids, source=f'layer "{name}"')
 
 
 def _find_whitening(layers, pca_dim):
@@ -204,6 +339,11 @@ def main():
     parser.add_argument('--dataset_root', default='Data/NCLT')
     parser.add_argument('--dataset_type', default='nclt')
     parser.add_argument('--pca_dim', type=int, default=4096)
+    parser.add_argument(
+        '--vlad_params_mat',
+        default=None,
+        help='Optional helper .mat containing clstsAssign and clsts exported from MATLAB/Octave',
+    )
     parser.add_argument('--dump_layers', action='store_true', help='Print layer names and weight shapes before converting')
     args = parser.parse_args()
 
@@ -219,7 +359,10 @@ def main():
     state = model.state_dict()
 
     _copy_vgg_layers(layers, state)
-    _copy_vlad_layer(layers, state)
+    if args.vlad_params_mat is None:
+        _copy_vlad_layer(layers, state)
+    else:
+        _copy_vlad_from_helper_mat(args.vlad_params_mat, state)
     _copy_whitening(layers, state, args.pca_dim)
 
     model.load_state_dict(state, strict=True)

@@ -137,14 +137,22 @@ class RINGSharpVL(nn.Module):
         from glnet.models.localizer.ring_sharp_v import RINGSharpV
         from glnet.models.localizer.ring_sharp_l import RINGSharpL
 
-        self.visual_branch = RINGSharpV(model_params)
-        self.lidar_branch = RINGSharpL(model_params)
-        if self.visual_branch.feature_dim != model_params.bev_fusion_visual_channels:
+        self.vl_ablation_mode = getattr(model_params, 'vl_ablation_mode', 'fusion')
+        if self.vl_ablation_mode not in ('fusion', 'only_visual', 'only_lidar'):
+            raise ValueError(
+                'vl_ablation_mode must be one of "fusion", "only_visual", or "only_lidar", '
+                f'got {self.vl_ablation_mode}'
+            )
+
+        self.visual_branch = RINGSharpV(model_params) if self.vl_ablation_mode in ('fusion', 'only_visual') else None
+        self.lidar_branch = RINGSharpL(model_params) if self.vl_ablation_mode in ('fusion', 'only_lidar') else None
+
+        if self.visual_branch is not None and self.visual_branch.feature_dim != model_params.bev_fusion_visual_channels:
             raise ValueError(
                 f'Visual branch BEV channels={self.visual_branch.feature_dim}, '
                 f'but bev_fusion_visual_channels={model_params.bev_fusion_visual_channels}.'
             )
-        if self.lidar_branch.feature_dim != model_params.bev_fusion_lidar_channels:
+        if self.lidar_branch is not None and self.lidar_branch.feature_dim != model_params.bev_fusion_lidar_channels:
             raise ValueError(
                 f'LiDAR branch BEV channels={self.lidar_branch.feature_dim}, '
                 f'but bev_fusion_lidar_channels={model_params.bev_fusion_lidar_channels}.'
@@ -161,6 +169,19 @@ class RINGSharpVL(nn.Module):
         self.bev_fusion_strict_meta = model_params.bev_fusion_strict_meta
         self.bev_fusion_timestamp_tolerance_ms = model_params.bev_fusion_timestamp_tolerance_ms
         self.adaptive_fusion_enabled = model_params.adaptive_fusion
+        if self.vl_ablation_mode == 'only_visual':
+            self.feature_dim = self.visual_branch.feature_dim
+            self.spec_descriptor_head = self.visual_branch.spec_descriptor_head if self.descriptor_from_spec else None
+            self.bev_fusion = None
+            self.adaptive_reliability_estimator = None
+            return
+        if self.vl_ablation_mode == 'only_lidar':
+            self.feature_dim = self.lidar_branch.feature_dim
+            self.spec_descriptor_head = self.lidar_branch.spec_descriptor_head if self.descriptor_from_spec else None
+            self.bev_fusion = None
+            self.adaptive_reliability_estimator = None
+            return
+
         self.feature_dim = model_params.bev_fusion_out_channels
         self.spec_descriptor_head = self.visual_branch.spec_descriptor_head if self.descriptor_from_spec else None
 
@@ -174,6 +195,7 @@ class RINGSharpVL(nn.Module):
             num_points=model_params.bev_fusion_num_points,
             dropout=model_params.bev_fusion_dropout,
             drop_path=model_params.bev_fusion_drop_path,
+            use_deform_attn=model_params.bev_fusion_use_deform_attn,
             prefer_cuda_ms_deform_attn=model_params.bev_fusion_prefer_cuda_ms_deform_attn,
         )
         self.adaptive_reliability_estimator = (
@@ -208,12 +230,16 @@ class RINGSharpVL(nn.Module):
         )
 
     def extract_vision_bev(self, batch, return_reliability=False):
+        if self.visual_branch is None:
+            raise RuntimeError('Visual branch is disabled for vl_ablation_mode=only_lidar')
         return self.visual_branch.extract_vision_bev(batch, return_reliability=return_reliability)
 
     def extract_bev_features(self, batch):
         return self.extract_vision_bev(batch)
 
     def extract_lidar_bev(self, batch):
+        if self.lidar_branch is None:
+            raise RuntimeError('LiDAR branch is disabled for vl_ablation_mode=only_visual')
         return self.lidar_branch.extract_lidar_bev(batch)
 
     def extract_fused_bev(self, batch):
@@ -244,6 +270,33 @@ class RINGSharpVL(nn.Module):
         return visual_outputs, lidar_outputs, fusion_outputs
 
     def forward(self, batch):
+        if self.vl_ablation_mode == 'only_visual':
+            visual_outputs = self.extract_vision_bev(batch, return_reliability=False)
+            extra_outputs = {
+                'visual_bev': visual_outputs['bev'],
+                'fused_bev': visual_outputs['bev'],
+                'bev_fusion_backend': 'only_visual',
+            }
+            return self.visual_branch.forward_bev_downstream(
+                visual_outputs['bev'],
+                depth_pred=visual_outputs['depth'],
+                bev_confidence=visual_outputs['confidence'],
+                extra_outputs=extra_outputs,
+            )
+
+        if self.vl_ablation_mode == 'only_lidar':
+            lidar_outputs = self.extract_lidar_bev(batch)
+            extra_outputs = {
+                'lidar_bev': lidar_outputs['bev'],
+                'fused_bev': lidar_outputs['bev'],
+                'bev_fusion_backend': 'only_lidar',
+            }
+            return self.lidar_branch.forward_bev_downstream(
+                lidar_outputs['bev'],
+                bev_confidence=lidar_outputs['confidence'],
+                extra_outputs=extra_outputs,
+            )
+
         visual_outputs, lidar_outputs, fusion_outputs = self.extract_fused_bev(batch)
         visual_bev = visual_outputs['bev']
         lidar_bev = lidar_outputs['bev']
@@ -271,7 +324,9 @@ class RINGSharpVL(nn.Module):
         print('Model class: RING#-VL')
         n_params = sum(param.nelement() for param in self.parameters())
         print('Total parameters: {}'.format(n_params))
-        n_params = sum(param.nelement() for param in self.visual_branch.encoder.parameters())
-        print('Visual encoder parameters: {}'.format(n_params))
-        n_params = sum(param.nelement() for param in self.lidar_branch.encoder.parameters())
-        print('LiDAR BEV encoder parameters: {}'.format(n_params))
+        if self.visual_branch is not None:
+            n_params = sum(param.nelement() for param in self.visual_branch.encoder.parameters())
+            print('Visual encoder parameters: {}'.format(n_params))
+        if self.lidar_branch is not None:
+            n_params = sum(param.nelement() for param in self.lidar_branch.encoder.parameters())
+            print('LiDAR BEV encoder parameters: {}'.format(n_params))

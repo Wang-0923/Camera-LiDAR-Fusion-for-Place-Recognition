@@ -56,6 +56,103 @@ class GLEvaluator(Evaluator):
         # This method may be overloaded when model is a tuple consisting of a few models (as in Disco)
         [model.eval() for model in models]
 
+    def _is_official_minkloc_multimodal(self):
+        return 'official_minkloc_multimodal' in self.params.model
+
+    def _is_official_adafusion(self):
+        return 'official_adafusion' in self.params.model
+
+    def _sample_and_normalize_minkloc_points(self, pc, sample_id=0):
+        pc = np.asarray(pc, dtype=np.float32)
+        if pc.ndim != 2 or pc.shape[1] < 3:
+            raise ValueError(f'Expected point cloud [N,3+] for MinkLoc++, got {pc.shape}')
+        pc = pc[:, :3]
+        pc = pc[np.isfinite(pc).all(axis=1)]
+        if pc.shape[0] == 0:
+            raise ValueError('Cannot build MinkLoc++ input from an empty point cloud')
+
+        num_points = int(self.params.minkloc_num_points)
+        seed = int(self.params.minkloc_pointcloud_sample_seed) + int(sample_id)
+        rng = np.random.default_rng(seed)
+        if pc.shape[0] >= num_points:
+            indices = rng.choice(pc.shape[0], size=num_points, replace=False)
+        else:
+            indices = rng.choice(pc.shape[0], size=num_points, replace=True)
+        pc = pc[indices]
+
+        if self.params.minkloc_normalize_pointcloud:
+            pc = pc - pc.mean(axis=0, keepdims=True)
+            scale = np.max(np.abs(pc))
+            if scale > 1e-6:
+                pc = pc / scale
+        return torch.from_numpy(pc.astype(np.float32))
+
+    def _build_official_minkloc_batch(self, orig_pc, orig_imgs, sample):
+        try:
+            import MinkowskiEngine as ME
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError('Official MinkLoc++ evaluation requires MinkowskiEngine') from exc
+
+        sample_id = getattr(sample, 'timestamp', 0)
+        coords = self._sample_and_normalize_minkloc_points(orig_pc, sample_id=sample_id)
+        coords = ME.utils.sparse_quantize(
+            coordinates=coords,
+            quantization_size=float(self.params.minkloc_quantization_size),
+        )
+        bcoords = ME.utils.batched_coordinates([coords]).to(self.device)
+        feats = torch.ones((bcoords.shape[0], 1), dtype=torch.float32, device=self.device)
+
+        cam_ndx = int(self.params.minkloc_image_cam)
+        if orig_imgs is None or len(orig_imgs) <= cam_ndx:
+            raise ValueError(f'NCLT Cam index {cam_ndx} is unavailable for MinkLoc++ image input')
+        to_tensor = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ])
+        image = to_tensor(orig_imgs[cam_ndx]).unsqueeze(0).to(self.device)
+        return {
+            'coords': bcoords,
+            'features': feats,
+            'images': image,
+            'orig_pc': orig_pc,
+        }
+
+    def _adafusion_pc_to_voxel(self, pc):
+        pc = np.asarray(pc, dtype=np.float32)
+        pc = pc[:, :3]
+        pc = pc[np.isfinite(pc).all(axis=1)]
+        pc = pc[pc[:, 2] < -0.5]
+        pc[:, 2] = -pc[:, 2]
+        lower = np.array((-20.0, -20.0, 0.0), dtype=np.float32)
+        upper = np.array((20.0, 20.0, 5.0), dtype=np.float32)
+        shape = np.asarray(self.params.adafusion_voxel_shape, dtype=np.int32)
+        voxel_per = shape / (upper - lower)
+        voxel_index = np.round((pc - lower) * voxel_per).astype(np.int32)
+        valid = (voxel_index >= 0) & (voxel_index < shape)
+        valid = valid[:, 0] & valid[:, 1] & valid[:, 2]
+        voxel = np.zeros(tuple(shape.tolist()), dtype=np.float32)
+        voxel_index = voxel_index[valid]
+        voxel[voxel_index[:, 0], voxel_index[:, 1], voxel_index[:, 2]] = 1.0
+        return torch.from_numpy(voxel).unsqueeze(0).unsqueeze(0).to(self.device)
+
+    def _build_official_adafusion_batch(self, orig_pc, orig_imgs):
+        cam_num = int(self.params.adafusion_image_cam)
+        cam_ndx = cam_num - 1
+        if orig_imgs is None or len(orig_imgs) <= cam_ndx:
+            raise ValueError(f'NCLT Cam{cam_num} is unavailable for AdaFusion image input')
+        image_np = orig_imgs[cam_ndx]
+        if image_np.ndim == 3 and image_np.shape[2] >= 3:
+            image_np = image_np[:, :, :3][:, :, ::-1].copy()
+        to_tensor = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize(tuple(self.params.adafusion_image_size)),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ])
+        image = to_tensor(image_np).unsqueeze(0).to(self.device)
+        pc = self._adafusion_pc_to_voxel(orig_pc)
+        return {'img': image, 'pc': pc, 'orig_pc': orig_pc}
+
     def evaluate(self, model, exp_name=None, icp_refine=False, one_shot=False, config=default_config, *args, **kwargs):
         model.eval()
         if exp_name is None:
@@ -374,6 +471,35 @@ class GLEvaluator(Evaluator):
             
             orig_pc = np.array(orig_pc)
             orig_imgs = np.array(orig_imgs)
+            if self._is_official_minkloc_multimodal():
+                batch = self._build_official_minkloc_batch(orig_pc, orig_imgs, e)
+                global_embedding, unet_out, bev, spec = self.compute_embedding(batch, model)
+                if images is None and self.params.use_rgb:
+                    images = np.zeros(
+                        (len(eval_subset), orig_imgs.shape[-4], orig_imgs.shape[-3], orig_imgs.shape[-2], orig_imgs.shape[-1]),
+                        dtype=orig_imgs.dtype,
+                    )
+                if global_embeddings is None:
+                    global_embeddings = np.zeros((len(eval_subset), global_embedding.shape[1]), dtype=global_embedding.dtype)
+                if self.params.use_rgb:
+                    images[ndx] = orig_imgs
+                global_embeddings[ndx] = global_embedding
+                continue
+            if self._is_official_adafusion():
+                batch = self._build_official_adafusion_batch(orig_pc, orig_imgs)
+                global_embedding, unet_out, bev, spec = self.compute_embedding(batch, model)
+                if images is None and self.params.use_rgb:
+                    images = np.zeros(
+                        (len(eval_subset), orig_imgs.shape[-4], orig_imgs.shape[-3], orig_imgs.shape[-2], orig_imgs.shape[-1]),
+                        dtype=orig_imgs.dtype,
+                    )
+                if global_embeddings is None:
+                    global_embeddings = np.zeros((len(eval_subset), global_embedding.shape[1]), dtype=global_embedding.dtype)
+                if self.params.use_rgb:
+                    images[ndx] = orig_imgs
+                global_embeddings[ndx] = global_embedding
+                continue
+
             if self.params.use_bev:
                 bev_folder = bev_path.strip(bev_path.split('/')[-1])
                 if not os.path.exists(bev_folder):
@@ -542,9 +668,20 @@ if __name__ == "__main__":
     if weight is not None:
         assert os.path.exists(weight), 'Cannot open network weight: {}'.format(weight)
         print('Loading weight: {}'.format(weight))
-        
-        model = nn.DataParallel(model)
-        if 'netvlad_pretrain' in model_params.model:
+
+        if 'official_minkloc_multimodal' in model_params.model:
+            checkpoint = torch.load(weight, map_location=device)
+            model.load_official_state_dict(checkpoint, strict=True)
+        elif 'official_adafusion' in model_params.model:
+            checkpoint = torch.load(weight, map_location=device)
+            model.load_official_state_dict(checkpoint, strict=True)
+        else:
+            model = nn.DataParallel(model)
+        if 'official_minkloc_multimodal' in model_params.model:
+            pass
+        elif 'official_adafusion' in model_params.model:
+            pass
+        elif 'netvlad_pretrain' in model_params.model:
             checkpoint = torch.load(weight, map_location=lambda storage, loc: storage)
             model.load_state_dict(checkpoint['state_dict'])
         elif 'disco' in model_params.model:

@@ -279,6 +279,7 @@ class BEVDeformableFusion(nn.Module):
         num_points=4,
         dropout=0.0,
         drop_path=0.0,
+        use_deform_attn=True,
         prefer_cuda_ms_deform_attn=True,
     ):
         super().__init__()
@@ -287,6 +288,7 @@ class BEVDeformableFusion(nn.Module):
         self.embed_dim = embed_dim
         self.out_channels = out_channels
         self.num_levels = num_levels
+        self.use_deform_attn = use_deform_attn
 
         self.visual_adapter = ConvNormReLU(visual_in_channels, embed_dim, kernel_size=1, padding=0)
         self.lidar_adapter = ConvNormReLU(lidar_in_channels, embed_dim, kernel_size=1, padding=0)
@@ -372,33 +374,43 @@ class BEVDeformableFusion(nn.Module):
             fv = gv * fv0
             fl = gl * fl0
 
-        visual_pyramid = self.visual_pyramid(fv)
-        lidar_pyramid = self.lidar_pyramid(fl)
-        ref = build_bev_reference_points(
-            batch_size=visual_bev.shape[0],
-            height=h,
-            width=w,
-            num_levels=self.num_levels,
-            device=visual_bev.device,
-            dtype=visual_bev.dtype,
-        )
-
-        ov = self.lidar_to_visual(fv, lidar_pyramid, ref)
-        ol = self.visual_to_lidar(fl, visual_pyramid, ref)
-        if adaptive is not None:
-            # Cross-modal outputs are gated by the reliability of the source
-            # modality injected through attention.
-            ov = gl * ov
-            ol = gv * ol
-
-        f_cat = torch.cat([fv, fl, ov, ol], dim=1)
-        f_conv = self.fuse_conv(f_cat)
         f_base = self.base_proj(torch.cat([fv, fl], dim=1))
-        fused = self.out_proj(f_conv + f_base)
+        if self.use_deform_attn:
+            visual_pyramid = self.visual_pyramid(fv)
+            lidar_pyramid = self.lidar_pyramid(fl)
+            ref = build_bev_reference_points(
+                batch_size=visual_bev.shape[0],
+                height=h,
+                width=w,
+                num_levels=self.num_levels,
+                device=visual_bev.device,
+                dtype=visual_bev.dtype,
+            )
+
+            ov = self.lidar_to_visual(fv, lidar_pyramid, ref)
+            ol = self.visual_to_lidar(fl, visual_pyramid, ref)
+            if adaptive is not None:
+                # Cross-modal outputs are gated by the reliability of the source
+                # modality injected through attention.
+                ov = gl * ov
+                ol = gv * ol
+
+            f_cat = torch.cat([fv, fl, ov, ol], dim=1)
+            f_conv = self.fuse_conv(f_cat)
+            fused = self.out_proj(f_conv + f_base)
+            attention_backend = self.lidar_to_visual.attn.backend
+        else:
+            visual_pyramid = None
+            lidar_pyramid = None
+            ref = None
+            ov = None
+            ol = None
+            fused = self.out_proj(f_base)
+            attention_backend = 'disabled_concat'
 
         output = {
             'fused_bev': fused,
-            'attention_backend': self.lidar_to_visual.attn.backend,
+            'attention_backend': attention_backend,
         }
         if adaptive is not None:
             output['adaptive'] = adaptive
